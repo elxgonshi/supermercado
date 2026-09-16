@@ -1,0 +1,85 @@
+LIDER LIVE CONTRACT PROBE v1 — INSTRUCCIONES
+
+OBJETIVO
+Validar en tu navegador real las mismas 10 búsquedas usadas en Jumbo/Unimarc.
+El probe NO hace clicks producto por producto y NO lee cookies, storage, dirección,
+geolocalización, tokens ni headers. Usa navegación normal del navegador en iframes
+same-origin y lee solo los campos públicos del SSR de resultados.
+
+ANTES DE EMPEZAR
+1. Abre https://super.lider.cl en Chrome.
+2. Deja seleccionada la tienda/dirección que usarías normalmente para comprar.
+3. No uses incógnito si tu sesión normal ya carga Lider sin challenge.
+4. Si Lider muestra CAPTCHA/challenge antes de empezar, resuélvelo normalmente tú.
+   El probe no intenta saltárselo.
+
+PASOS
+1. Presiona F12.
+2. Ve a Sources > Snippets.
+3. Crea un snippet nuevo.
+4. Pega TODO el contenido de:
+   spikes/lider_browser_probe_v1.js
+5. Ejecuta el snippet (Ctrl+Enter).
+6. En Console verifica:
+
+   typeof __LIDER_SPIKE_V1__
+
+   Debe devolver:
+   "object"
+
+7. Ejecuta:
+
+   await __LIDER_SPIKE_V1__.run()
+
+8. Espera a que termine. Hace estas 10 búsquedas en secuencia:
+   - mantequilla colun
+   - leche colun
+   - arroz banquete
+   - aceite chef
+   - fideos carozzi
+   - azúcar iansa
+   - huevos
+   - papel higiénico confort
+   - coca cola
+   - pechuga pollo
+
+   No hagas clicks ni cambies de tienda mientras corre.
+
+9. Cuando aparezca el mensaje "Terminado", ejecuta:
+
+   __LIDER_SPIKE_V1__.status()
+
+10. Luego descarga el resultado:
+
+   __LIDER_SPIKE_V1__.download("lider-live-contract-v1.sanitized.json")
+
+11. Sube al chat SOLO:
+
+   lider-live-contract-v1.sanitized.json
+
+SI ALGO FALLA
+- Si status() muestra 0 productos, timeout o nextData=false en varias búsquedas,
+  NO repitas todo ni empieces a abrir productos manualmente.
+- Descarga igualmente el JSON y súbelo. Ese resultado nos sirve para decidir
+  si Líder cambió de SSR a RSC, bloqueó iframes, o exige otro fallback local.
+- No compartas cookies, storage_state, tokens ni capturas de headers.
+
+QUÉ GUARDA EL JSON
+- nombre y marca públicos;
+- usItemId/id/productId si aparecen públicamente;
+- ean/upc/gtin SOLO si el SSR los expone explícitamente;
+- canonicalUrl;
+- availabilityStatus;
+- priceInfo público: current/list/unit/member si existe;
+- badges/promociones públicas;
+- nombres de campos del schema.
+
+QUÉ NO GUARDA
+- cookies;
+- localStorage/sessionStorage;
+- geolocalización;
+- dirección;
+- headers;
+- tokens;
+- HTML completo;
+- datos de cuenta.
