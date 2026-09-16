@@ -91,8 +91,8 @@ Privacy / safety
     return { products: out, visited };
   }
 
-  const UNSAFE_PATH = /address|postal|zip|latitude|longitude|geo|coordinate|customer|session|token|cookie|auth|email|phone/i;
-  const SAFE_CONTEXT_KEY = /^(storeId|storeIds|storeNumber|storeNumberId|fulfillmentStoreId|preferredStoreId|locationId)$/i;
+  const UNSAFE_PATH = /address|postal|zip|latitude|longitude|geo|coordinate|location|customer|session|token|cookie|auth|email|phone/i;
+  const SAFE_CONTEXT_KEY = /^(storeId|storeIds|storeNumber|storeNumberId|fulfillmentStoreId|preferredStoreId)$/i;
 
   function safeContextScalar(value) {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -189,7 +189,6 @@ Privacy / safety
         availabilityInNearbyStore: boolOrNull(p.availabilityInNearbyStore),
         seeShippingEligibility: boolOrNull(p.seeShippingEligibility),
         fulfillmentType: stringOrNull(p.fulfillmentType),
-        fulfillmentTitle: stringOrNull(p.fulfillmentTitle),
         fulfillmentSpeed: stringOrNull(p.fulfillmentSpeed),
         availabilityStatusV2: safeNestedSignalObject(p.availabilityStatusV2),
         fulfillmentSummary: safeNestedSignalObject(p.fulfillmentSummary),
@@ -205,7 +204,6 @@ Privacy / safety
           'availabilityInNearbyStore',
           'seeShippingEligibility',
           'fulfillmentType',
-          'fulfillmentTitle',
           'fulfillmentSpeed',
           'availabilityStatusV2',
           'fulfillmentSummary',
@@ -254,7 +252,6 @@ Privacy / safety
 
     return await new Promise((resolve) => {
       let settled = false;
-      let sawExpectedNavigation = false;
 
       const finish = (value) => {
         if (settled) return;
@@ -272,18 +269,41 @@ Privacy / safety
         setTimeout(() => {
           try {
             const href = frame.contentWindow?.location?.href || '';
-            const u = href ? new URL(href) : null;
-            if (!u || u.hostname !== location.hostname || u.pathname !== '/search' || u.searchParams.get('query') !== query) {
-              if (!sawExpectedNavigation) return;
-            } else {
-              sawExpectedNavigation = true;
-            }
+            if (!href || href === 'about:blank') return;
 
             const doc = frame.contentDocument;
             if (!doc) {
               finish({ query, error: 'no-content-document', productCount: 0, storeContextCandidates: [], products: [] });
               return;
             }
+
+            const challenge = challengeSignals(doc);
+            if (challenge.robotOrHuman || challenge.blockedWord) {
+              finish({
+                query,
+                nextDataFound: false,
+                nextDataParseError: null,
+                challenge,
+                productCount: 0,
+                storeContextCandidates: [],
+                products: [],
+              });
+              return;
+            }
+
+            const u = new URL(href);
+            if (u.hostname !== location.hostname || u.pathname !== '/search' || u.searchParams.get('query') !== query) {
+              finish({
+                query,
+                error: 'unexpected-navigation',
+                pathname: u.pathname,
+                productCount: 0,
+                storeContextCandidates: [],
+                products: [],
+              });
+              return;
+            }
+
             finish(inspect(doc, query));
           } catch (error) {
             finish({
