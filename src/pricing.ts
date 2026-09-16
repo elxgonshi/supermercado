@@ -5,21 +5,21 @@ export type AvailabilityState = "AVAILABLE" | "UNAVAILABLE" | "UNKNOWN";
 export type BundleRepeatability = "single" | "repeatable" | "unknown";
 
 export interface BundlePromotion {
-  kind: "bundle";
+  readonly kind: "bundle";
   /** Cantidad de unidades del producto retail necesarias para activar el bundle. */
-  requiredQuantity: number;
+  readonly requiredQuantity: number;
   /** Precio total del bundle en CLP. */
-  totalPrice: number;
+  readonly totalPrice: number;
   /** Si la promoción exige membresía/Club de la cadena. */
-  memberOnly: boolean;
+  readonly memberOnly: boolean;
   /**
    * `unknown` se interpreta conservadoramente como una sola aplicación.
    * Solo `repeatable` permite repetir el bundle automáticamente.
    */
-  repeatability: BundleRepeatability;
+  readonly repeatability: BundleRepeatability;
   /** Límite explícito observado; null si la fuente no informa uno. */
-  maxApplications: number | null;
-  sourceText: string | null;
+  readonly maxApplications: number | null;
+  readonly sourceText: string | null;
 }
 
 export type Promotion = BundlePromotion;
@@ -28,17 +28,17 @@ export type Promotion = BundlePromotion;
  * Observación inmutable de precio. El historial debe agregar filas, no sobreescribirlas.
  */
 export interface PriceObservation {
-  store: StoreId;
-  storeProductId: string;
-  branchId: string | null;
-  observedAt: string;
-  normalPrice: number | null;
-  currentPrice: number | null;
-  memberPrice: number | null;
-  unitPrice: number | null;
-  availability: AvailabilityState;
-  promotions: Promotion[];
-  source: string;
+  readonly store: StoreId;
+  readonly storeProductId: string;
+  readonly branchId: string | null;
+  readonly observedAt: string;
+  readonly normalPrice: number | null;
+  readonly currentPrice: number | null;
+  readonly memberPrice: number | null;
+  readonly unitPrice: number | null;
+  readonly availability: AvailabilityState;
+  readonly promotions: readonly Promotion[];
+  readonly source: string;
 }
 
 export function publicUnitPrice(observation: PriceObservation): number | null {
