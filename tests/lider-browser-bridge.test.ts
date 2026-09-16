@@ -16,8 +16,11 @@ interface Inspection {
 class FakePage implements LocalBrowserPagePort {
   readonly navigations: string[] = [];
   private currentUrl = "https://super.lider.cl/";
+  private readonly inspections: Inspection[];
 
-  constructor(private readonly inspections: Inspection[]) {}
+  constructor(inspections: Inspection[]) {
+    this.inspections = inspections;
+  }
 
   async goto(url: string): Promise<void> {
     this.navigations.push(url);
