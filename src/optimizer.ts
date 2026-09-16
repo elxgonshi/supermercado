@@ -1,4 +1,4 @@
-import { STORE_IDS, type StoreId, type StoreProduct } from "./catalog.ts";
+import { type StoreId, type StoreProduct } from "./catalog.ts";
 import {
   eligibleBaseUnitPrice,
   isValidBundlePromotion,
@@ -6,6 +6,9 @@ import {
   type BundlePromotion,
   type PriceObservation,
 } from "./pricing.ts";
+
+export const OPTIMIZER_V1_STORES = ["jumbo", "unimarc"] as const satisfies readonly StoreId[];
+const OPTIMIZER_V1_STORE_SET = new Set<StoreId>(OPTIMIZER_V1_STORES);
 
 export interface BasketItem {
   id: string;
@@ -125,6 +128,9 @@ function assertMaxStores(maxStores: number | undefined): void {
 
 function assertOfferLink(offer: PricedStoreProduct): void {
   const { storeProduct, observation } = offer;
+  if (!OPTIMIZER_V1_STORE_SET.has(storeProduct.store)) {
+    throw new Error(`${storeProduct.store} is not supported by optimizer v1`);
+  }
   if (!storeProduct.canonicalProductId) {
     throw new Error(`Store product ${storeProduct.storeProductId} is not linked to a canonical product`);
   }
@@ -291,7 +297,7 @@ function compareLines(a: OptimizedLine, b: OptimizedLine): number {
   if (a.lineTotal !== b.lineTotal) return a.lineTotal - b.lineTotal;
   if (a.uncertainAvailability !== b.uncertainAvailability) return a.uncertainAvailability ? 1 : -1;
   if (a.usesMembership !== b.usesMembership) return a.usesMembership ? 1 : -1;
-  const storeOrder = STORE_IDS.indexOf(a.store) - STORE_IDS.indexOf(b.store);
+  const storeOrder = OPTIMIZER_V1_STORES.indexOf(a.store as "jumbo" | "unimarc") - OPTIMIZER_V1_STORES.indexOf(b.store as "jumbo" | "unimarc");
   if (storeOrder !== 0) return storeOrder;
   return a.storeProductId.localeCompare(b.storeProductId);
 }
@@ -324,7 +330,7 @@ function evaluateStoreSubset(
     return { feasible: false, stores: [...stores], missingItemIds };
   }
 
-  const usedStores = STORE_IDS.filter((store) => lines.some((line) => line.store === store));
+  const usedStores = OPTIMIZER_V1_STORES.filter((store) => lines.some((line) => line.store === store));
   const byStore: StorePlanSegment[] = usedStores.map((store) => {
     const storeItems = lines.filter((line) => line.store === store);
     return {
@@ -337,7 +343,7 @@ function evaluateStoreSubset(
 
   return {
     feasible: true,
-    stores: usedStores,
+    stores: [...usedStores],
     storeCount: usedStores.length,
     items: lines,
     byStore,
@@ -392,7 +398,9 @@ export function optimizeBasket(
 
   const memberStores = new Set(options.memberStores ?? []);
   const availabilityPolicy = options.availabilityPolicy ?? "require_available";
-  const activeStores = STORE_IDS.filter((store) => offers.some((offer) => offer.storeProduct.store === store));
+  const activeStores: StoreId[] = OPTIMIZER_V1_STORES.filter((store) =>
+    offers.some((offer) => offer.storeProduct.store === store),
+  );
 
   const unresolvedItemIds = items
     .filter((item) => !offers.some((offer) => lineIsEligible(item, offer, memberStores, availabilityPolicy)))
