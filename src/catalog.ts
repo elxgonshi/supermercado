@@ -69,6 +69,10 @@ export function normalizeGtin(value: string | null | undefined): string | null {
   if (!value) return null;
   const digits = value.replace(/\D/g, "");
   if (![8, 12, 13, 14].includes(digits.length)) return null;
+
+  // A syntactically valid checksum is not enough for identity: all-zero GTINs
+  // are feed placeholders and must never auto-confirm unrelated products.
+  if (/^0+$/.test(digits)) return null;
   if (!isValidGtin(digits)) return null;
 
   // Unimarc has been observed returning values in this 999000000... namespace
@@ -104,18 +108,76 @@ export interface ParsedPackSize {
 
 const DECIMAL = "(\\d+(?:[.,]\\d+)?)";
 const UNIT = "(kg|kilos?|g|grs?|gramos?|l|lt|litros?|ml|cc|m|mt|mts|metros?|un|u|unidad(?:es)?)";
+const BASE_MAGNITUDE_UNITS = new Set([
+  "g",
+  "gr",
+  "grs",
+  "gramo",
+  "gramos",
+  "ml",
+  "cc",
+  "m",
+  "mt",
+  "mts",
+  "metro",
+  "metros",
+  "un",
+  "u",
+  "unidad",
+  "unidades",
+]);
+
+function stableNumber(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+/**
+ * Product names in Chile mix decimal separators and thousands separators:
+ * - `1,5 L` / `1.5 L` => decimal 1.5 L
+ * - `1.000 g` / `1,000 g` => 1000 g
+ *
+ * For base-magnitude units (g/ml/m/un), a non-zero integer followed by exactly
+ * three digits is treated as a thousands grouping. For kg/L the separator is
+ * always interpreted as decimal, avoiding absurd conversions such as 1.000 kg
+ * -> 1000 kg. Ambiguous zero-prefixed values such as 0.250 g remain decimal.
+ */
+function parseRetailQuantity(rawQuantity: string, rawUnit: string): number | null {
+  const raw = rawQuantity.trim();
+  const unit = normalizeText(rawUnit);
+  const separated = raw.match(/^(\d+)([.,])(\d+)$/);
+
+  let numericText = raw;
+  if (separated) {
+    const integerPart = separated[1] ?? "";
+    const fractionPart = separated[3] ?? "";
+    const looksLikeThousands =
+      BASE_MAGNITUDE_UNITS.has(unit) &&
+      integerPart !== "0" &&
+      fractionPart.length === 3;
+    numericText = looksLikeThousands
+      ? `${integerPart}${fractionPart}`
+      : `${integerPart}.${fractionPart}`;
+  }
+
+  const quantity = Number(numericText);
+  if (!Number.isFinite(quantity) || quantity <= 0) return null;
+  return stableNumber(quantity);
+}
 
 function toBaseQuantity(rawQuantity: string, rawUnit: string): Pick<ParsedPackSize, "quantity" | "unit"> | null {
-  const quantity = Number(rawQuantity.replace(",", "."));
-  if (!Number.isFinite(quantity) || quantity <= 0) return null;
+  const quantity = parseRetailQuantity(rawQuantity, rawUnit);
+  if (quantity === null) return null;
   const unit = normalizeText(rawUnit);
 
-  if (["kg", "kilo", "kilos"].includes(unit)) return { quantity: Math.round(quantity * 1000), unit: "g" };
-  if (["g", "gr", "grs", "gramo", "gramos"].includes(unit)) return { quantity: Math.round(quantity), unit: "g" };
-  if (["l", "lt", "litro", "litros"].includes(unit)) return { quantity: Math.round(quantity * 1000), unit: "ml" };
-  if (["ml", "cc"].includes(unit)) return { quantity: Math.round(quantity), unit: "ml" };
+  if (["kg", "kilo", "kilos"].includes(unit)) return { quantity: stableNumber(quantity * 1000), unit: "g" };
+  if (["g", "gr", "grs", "gramo", "gramos"].includes(unit)) return { quantity, unit: "g" };
+  if (["l", "lt", "litro", "litros"].includes(unit)) return { quantity: stableNumber(quantity * 1000), unit: "ml" };
+  if (["ml", "cc"].includes(unit)) return { quantity, unit: "ml" };
   if (["m", "mt", "mts", "metro", "metros"].includes(unit)) return { quantity, unit: "m" };
-  if (["un", "u", "unidad", "unidades"].includes(unit)) return { quantity: Math.round(quantity), unit: "un" };
+  if (["un", "u", "unidad", "unidades"].includes(unit)) {
+    if (!Number.isInteger(quantity)) return null;
+    return { quantity, unit: "un" };
+  }
   return null;
 }
 
