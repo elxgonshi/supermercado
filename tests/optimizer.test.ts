@@ -280,23 +280,12 @@ test("if splitting saves nothing, store-limit marginal saving is zero and one st
   assert.equal(result.bestByStoreLimit[1]?.marginalSaving, 0);
 });
 
-test("bestTwoStores never falls back to a three-store plan", () => {
-  const basket: BasketItem[] = [
-    { id: "a", canonicalProductId: "a", quantity: 1 },
-    { id: "b", canonicalProductId: "b", quantity: 1 },
-    { id: "c", canonicalProductId: "c", quantity: 1 },
-  ];
-  const offers = [
-    offer("jumbo", "a", "j-a", { currentPrice: 1000 }),
-    offer("unimarc", "b", "u-b", { currentPrice: 1000 }),
-    offer("lider", "c", "l-c", { currentPrice: 1000 }),
-  ];
-
-  const result = optimizeBasket(basket, offers);
-  assert.equal(result.bestSingleStore, null);
-  assert.equal(result.bestTwoStores, null);
-  assert.equal(result.unrestricted?.storeCount, 3);
-  assert.equal(result.unrestricted?.total, 3000);
+test("optimizer v1 rejects Lider offers until that adapter is validated", () => {
+  const liderOffer = offer("lider", "milk-colun-1l", "l-milk", { currentPrice: 1000 });
+  assert.throws(
+    () => optimizeBasket(oneItem, [liderOffer]),
+    /lider is not supported by optimizer v1/,
+  );
 });
 
 test("maxStores selects the mathematical optimum under the requested constraint", () => {
