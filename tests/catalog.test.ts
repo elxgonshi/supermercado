@@ -99,7 +99,6 @@ test("matching confirms deterministic attributes when GTIN is unavailable", () =
   assert.equal(result.strategy, "deterministic");
 });
 
-
 test("matching does not auto-confirm when variant is missing on both sides", () => {
   const left = product({ variant: null, rawName: "Leche Colun 1 L" });
   const right = product({ store: "unimarc", variant: null, rawName: "Leche Colun 1 litro" });
@@ -131,4 +130,104 @@ test("similar volume alone does not make products equal", () => {
   const left = product({ brand: "Coca Cola", family: "Bebida", variant: "original", quantity: 1000, unit: "ml", rawName: "Bebida Coca Cola original 1 L" });
   const right = product({ store: "unimarc", brand: "Sprite", family: "Bebida", variant: "original", quantity: 1000, unit: "ml", rawName: "Bebida Sprite original 1 L" });
   assert.equal(matchStoreProducts(left, right).kind, "no_match");
+});
+
+// Public identity fields recovered from the validated Jumbo jumboclj955 pilot
+// and the sanitized Unimarc UI captures from 2026-09-03. Prices are deliberately
+// omitted: price/promotion/stock must never participate in identity matching.
+const REAL_EXACT_PAIRS = [
+  {
+    label: "Mantequilla Colun con sal 250 g",
+    jumbo: { storeProductId: "6782", sku: "6870", gtin: "7802920203300", rawName: "Mantequilla Colun con Sal 250 g" },
+    unimarc: { storeProductId: "410", sku: "410", gtin: "7802920203300", rawName: "Mantequilla Colun con sal pan 250 g" },
+  },
+  {
+    label: "Leche Colun entera 1 L",
+    jumbo: { storeProductId: "6609", sku: "6697", gtin: "7802920777542", rawName: "Leche Colun Entera 1 L" },
+    unimarc: { storeProductId: "2896", sku: "2896", gtin: "7802920777542", rawName: "Leche entera natural Colun sin tapa 1 L" },
+  },
+  {
+    label: "Azúcar blanca Iansa 1 Kg",
+    jumbo: { storeProductId: "1633", sku: "1638", gtin: "7801505231912", rawName: "Azúcar Iansa 1 Kg" },
+    unimarc: { storeProductId: "62", sku: "62", gtin: "7801505231912", rawName: "Azúcar blanca Iansa 1 Kg" },
+  },
+  {
+    label: "Coca-Cola Zero 1.5 L",
+    jumbo: { storeProductId: "498", sku: "500", gtin: "7801610350409", rawName: "Coca-Cola Zero 1,5 L" },
+    unimarc: { storeProductId: "659", sku: "659", gtin: "7801610350409", rawName: "Bebida Coca Cola zero 1.5 L" },
+  },
+  {
+    label: "Confort Rendiplus 12 un",
+    jumbo: { storeProductId: "129980", sku: "130279", gtin: "7806500508656", rawName: "Confort Rendiplus 12 un" },
+    unimarc: { storeProductId: "86702", sku: "86702", gtin: "7806500508656", rawName: "Papel higiénico Confort doble hoja rendiplus 12 un 27 mt" },
+  },
+] as const;
+
+for (const pair of REAL_EXACT_PAIRS) {
+  test(`real pilot GTIN confirms ${pair.label}`, () => {
+    const left = product({
+      store: "jumbo",
+      storeProductId: pair.jumbo.storeProductId,
+      sku: pair.jumbo.sku,
+      gtin: pair.jumbo.gtin,
+      rawName: pair.jumbo.rawName,
+      brand: null,
+      family: null,
+      variant: null,
+      quantity: null,
+      unit: null,
+      packageCount: null,
+    });
+    const right = product({
+      store: "unimarc",
+      storeProductId: pair.unimarc.storeProductId,
+      sku: pair.unimarc.sku,
+      gtin: pair.unimarc.gtin,
+      rawName: pair.unimarc.rawName,
+      brand: null,
+      family: null,
+      variant: null,
+      quantity: null,
+      unit: null,
+      packageCount: null,
+    });
+    const result = matchStoreProducts(left, right);
+    assert.equal(result.kind, "confirmed");
+    assert.equal(result.strategy, "gtin_exact");
+  });
+}
+
+test("real Banquete pilot does not match merely because query, brand and format look similar", () => {
+  const jumbo = product({
+    store: "jumbo",
+    storeProductId: "1570",
+    sku: "1574",
+    gtin: "7803110102212",
+    rawName: "Arroz Banquete Premium 1 kg",
+    brand: "Banquete",
+    family: "Arroz",
+    variant: "premium",
+    quantity: 1000,
+    unit: "g",
+    packageCount: 1,
+  });
+  const unimarc = product({
+    store: "unimarc",
+    storeProductId: "32",
+    sku: "32",
+    gtin: "7801420950660",
+    rawName: "Arroz Banquete premium G1 1 Kg",
+    brand: "Banquete",
+    family: "Arroz",
+    variant: "premium",
+    quantity: 1000,
+    unit: "g",
+    packageCount: 1,
+  });
+
+  assert.deepEqual(matchStoreProducts(jumbo, unimarc), {
+    kind: "no_match",
+    strategy: "incompatible",
+    reasons: ["valid GTIN differs"],
+  });
 });
