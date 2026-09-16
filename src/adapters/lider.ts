@@ -1,0 +1,539 @@
+import {
+  normalizeGtin,
+  normalizeText,
+  parsePackSize,
+  type BaseUnit,
+  type StoreProduct,
+} from "../catalog.ts";
+import type {
+  AvailabilityState,
+  BundlePromotion,
+  PriceObservation,
+  Promotion,
+} from "../pricing.ts";
+import type {
+  AdapterHealth,
+  BranchContext,
+  IdentityCandidate,
+  StoreAdapter,
+  StoreProductSnapshot,
+} from "./types.ts";
+
+const LIDER_ORIGIN = "https://super.lider.cl";
+const MAX_WALK_DEPTH = 24;
+const MAX_WALK_NODES = 150_000;
+
+export interface LiderBridgeSearchResult {
+  readonly nextData: unknown;
+  readonly observedAt: string;
+  readonly source: string;
+}
+
+export interface LiderBridgeHealth {
+  readonly ok: boolean;
+  readonly message: string;
+}
+
+/**
+ * Browser transport boundary. A Playwright/local-browser implementation can
+ * satisfy this interface without leaking browser/session details into the
+ * central catalog code.
+ */
+export interface LiderSearchBridge {
+  search(query: string): Promise<LiderBridgeSearchResult>;
+  healthCheck?(): Promise<LiderBridgeHealth>;
+}
+
+export interface ParsedLiderSearch {
+  readonly branch: BranchContext;
+  readonly snapshots: readonly StoreProductSnapshot[];
+  readonly diagnostics: {
+    readonly visitedNodes: number;
+    readonly candidateProductNodes: number;
+    readonly normalizedProducts: number;
+  };
+}
+
+type JsonRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function recordAt(value: unknown): JsonRecord | null {
+  return isRecord(value) ? value : null;
+}
+
+function gs1CheckDigit(payload: string): string | null {
+  if (!/^\d+$/.test(payload)) return null;
+  let sum = 0;
+  for (let i = payload.length - 1, position = 1; i >= 0; i--, position++) {
+    const digit = Number(payload[i]);
+    if (!Number.isInteger(digit)) return null;
+    sum += digit * (position % 2 === 1 ? 3 : 1);
+  }
+  return String((10 - (sum % 10)) % 10);
+}
+
+/**
+ * Current Líder search SSR uses `00` + 12 digits as `usItemId` for regular
+ * packaged products. This can reconstruct an EAN-13 candidate, but it is NOT
+ * authoritative identity and must never be assigned directly to StoreProduct.gtin.
+ *
+ * Observed variable-weight/internal merchandise uses a payload starting with 2;
+ * those IDs are explicitly excluded from candidate derivation.
+ */
+export function deriveLiderEan13Candidate(usItemId: string | null | undefined): string | null {
+  if (!usItemId || !/^00\d{12}$/.test(usItemId)) return null;
+  const payload = usItemId.slice(2);
+  if (/^0+$/.test(payload) || payload.startsWith("2")) return null;
+  const checkDigit = gs1CheckDigit(payload);
+  if (checkDigit === null) return null;
+  const candidate = `${payload}${checkDigit}`;
+  return normalizeGtin(candidate) ? candidate : null;
+}
+
+function explicitGtinCandidate(product: JsonRecord): string | null {
+  const normalized = [product.gtin, product.ean, product.upc]
+    .map((value) => nonEmptyString(value))
+    .filter((value): value is string => value !== null)
+    .map((value) => normalizeGtin(value))
+    .filter((value): value is string => value !== null);
+  const distinct = [...new Set(normalized)];
+  return distinct.length === 1 ? distinct[0] ?? null : null;
+}
+
+function moneyValue(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+  const text = nonEmptyString(value);
+  if (!text) return null;
+  const digits = text.replace(/[^\d]/g, "");
+  if (!digits) return null;
+  const amount = Number(digits);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+function isWeightBasedPrice(value: unknown): boolean {
+  const text = nonEmptyString(value);
+  return text ? /\/\s*kg\b|\bx\s*kg\b/i.test(text) : false;
+}
+
+function categoryFromUrl(canonicalUrl: string | null): string | null {
+  if (!canonicalUrl) return null;
+  const match = canonicalUrl.match(/^\/ip\/([^/]+)\//i);
+  return match?.[1] ? normalizeText(match[1].replace(/-/g, " ")) : null;
+}
+
+function liderPackIdentity(rawName: string): {
+  quantity: number | null;
+  unit: BaseUnit | null;
+  packageCount: number | null;
+} {
+  const normalized = normalizeText(rawName);
+  const parsed = parsePackSize(rawName);
+  const isPack = /\bpack\b/.test(normalized);
+
+  if (!isPack) {
+    return {
+      quantity: parsed?.quantity ?? null,
+      unit: parsed?.unit ?? null,
+      packageCount: parsed?.packageCount ?? null,
+    };
+  }
+
+  // "Pack Lata, 6 Un" identifies the number of units, not a per-unit content.
+  const trailingUnits = normalized.match(/\b(\d+)\s+(?:un|u|unidad|unidades)$/);
+  if (trailingUnits?.[1]) {
+    const count = Number(trailingUnits[1]);
+    return {
+      quantity: null,
+      unit: null,
+      packageCount: Number.isInteger(count) && count > 1 ? count : null,
+    };
+  }
+
+  // Current names also use forms such as "Pack 3 Botella, 3 L".
+  const explicitContainerCount = normalized.match(/\bpack\s+(\d+)\s+(?:botella|botellas|lata|latas|unidad|unidades)\b/);
+  if (explicitContainerCount?.[1]) {
+    const count = Number(explicitContainerCount[1]);
+    return {
+      quantity: parsed?.unit === "un" ? null : (parsed?.quantity ?? null),
+      unit: parsed?.unit === "un" ? null : (parsed?.unit ?? null),
+      packageCount: Number.isInteger(count) && count > 1 ? count : null,
+    };
+  }
+
+  if (parsed && parsed.packageCount > 1) return parsed;
+
+  // A name containing "pack" without an explicit count is not safe to treat as
+  // a single retail unit for cross-store exact matching.
+  return {
+    quantity: parsed?.unit === "un" ? null : (parsed?.quantity ?? null),
+    unit: parsed?.unit === "un" ? null : (parsed?.unit ?? null),
+    packageCount: null,
+  };
+}
+
+export function mapLiderAvailability(product: JsonRecord): AvailabilityState {
+  const display = nonEmptyString(product.availabilityStatusDisplayValue)?.toLowerCase() ?? null;
+  const isOutOfStock = typeof product.isOutOfStock === "boolean" ? product.isOutOfStock : null;
+  const canAddToCart = typeof product.canAddToCart === "boolean" ? product.canAddToCart : null;
+  const showAtc = typeof product.showAtc === "boolean" ? product.showAtc : null;
+
+  if (
+    display === "in stock" &&
+    isOutOfStock === false &&
+    canAddToCart === true &&
+    showAtc === true
+  ) {
+    return "AVAILABLE";
+  }
+
+  if (
+    display === "out of stock" &&
+    isOutOfStock === true &&
+    canAddToCart === false &&
+    showAtc === false
+  ) {
+    return "UNAVAILABLE";
+  }
+
+  return "UNKNOWN";
+}
+
+function parseBundlePromotions(product: JsonRecord): readonly BundlePromotion[] {
+  const badges = recordAt(product.badges);
+  const flags = Array.isArray(badges?.flags) ? badges.flags : [];
+  const promotions: BundlePromotion[] = [];
+  const fingerprints = new Set<string>();
+
+  for (const rawFlag of flags) {
+    const flag = recordAt(rawFlag);
+    if (!flag) continue;
+    const key = nonEmptyString(flag.key);
+    const text = nonEmptyString(flag.text);
+    if (!text || key?.toUpperCase() !== "COMBINA") continue;
+
+    const match = text.match(/combina\s+(\d+)\s*x\s*\$?\s*([\d.]+)/i);
+    if (!match?.[1] || !match[2]) continue;
+    const requiredQuantity = Number(match[1]);
+    const totalPrice = moneyValue(match[2]);
+    if (!Number.isInteger(requiredQuantity) || requiredQuantity <= 1 || totalPrice === null) continue;
+
+    const fingerprint = `${requiredQuantity}|${totalPrice}|${text}`;
+    if (fingerprints.has(fingerprint)) continue;
+    fingerprints.add(fingerprint);
+    promotions.push({
+      kind: "bundle",
+      requiredQuantity,
+      totalPrice,
+      memberOnly: false,
+      repeatability: "unknown",
+      maxApplications: null,
+      sourceText: text,
+    });
+  }
+
+  return promotions;
+}
+
+function isStructuralProductCandidate(node: JsonRecord): boolean {
+  if (node.__typename === "Product") return true;
+  return (
+    nonEmptyString(node.usItemId) !== null &&
+    nonEmptyString(node.name) !== null &&
+    isRecord(node.priceInfo)
+  );
+}
+
+function collectProductNodes(root: unknown): { products: JsonRecord[]; visitedNodes: number } {
+  const products: JsonRecord[] = [];
+  const seenNodes = new WeakSet<object>();
+  const seenProducts = new Set<string>();
+  let visitedNodes = 0;
+
+  function walk(node: unknown, depth: number): void {
+    if (depth > MAX_WALK_DEPTH || visitedNodes >= MAX_WALK_NODES) return;
+    if (node === null || typeof node !== "object") return;
+    if (seenNodes.has(node)) return;
+    seenNodes.add(node);
+    visitedNodes++;
+
+    if (isRecord(node) && isStructuralProductCandidate(node)) {
+      const key = nonEmptyString(node.usItemId)
+        ?? nonEmptyString(node.id)
+        ?? nonEmptyString(node.canonicalUrl)
+        ?? nonEmptyString(node.name)
+        ?? `anonymous-${products.length}`;
+      if (!seenProducts.has(key)) {
+        seenProducts.add(key);
+        products.push(node);
+      }
+    }
+
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child, depth + 1);
+      return;
+    }
+    for (const value of Object.values(node)) walk(value, depth + 1);
+  }
+
+  walk(root, 0);
+  return { products, visitedNodes };
+}
+
+const SENSITIVE_CONTEXT_PATH = /address|postal|zip|latitude|longitude|geo|coordinate|location|customer|session|token|cookie|auth|email|phone/i;
+
+function collectStoreIds(root: unknown): string[] {
+  const values = new Set<string>();
+  const seen = new WeakSet<object>();
+  let visited = 0;
+
+  function walk(node: unknown, path: string, depth: number): void {
+    if (depth > 18 || visited >= 120_000 || node === null || typeof node !== "object") return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    visited++;
+
+    if (Array.isArray(node)) {
+      node.forEach((child, index) => walk(child, `${path}[${index}]`, depth + 1));
+      return;
+    }
+
+    for (const [key, value] of Object.entries(node)) {
+      const nextPath = path ? `${path}.${key}` : key;
+      if (!SENSITIVE_CONTEXT_PATH.test(nextPath) && key === "storeId") {
+        const storeId = nonEmptyString(value);
+        if (storeId && /^[A-Za-z0-9_-]{1,40}$/.test(storeId)) values.add(storeId);
+      }
+      walk(value, nextPath, depth + 1);
+    }
+  }
+
+  walk(root, "", 0);
+  return [...values].sort();
+}
+
+function branchFromPayload(nextData: unknown): BranchContext {
+  const storeIds = collectStoreIds(nextData);
+  if (storeIds.length !== 1) {
+    return {
+      store: "lider",
+      branchId: null,
+      scope: "UNKNOWN",
+      source: storeIds.length === 0 ? "lider_ssr:no_store_id" : "lider_ssr:ambiguous_store_id",
+    };
+  }
+  return {
+    store: "lider",
+    branchId: `lider:store:${storeIds[0]}`,
+    scope: "SESSION_SCOPED",
+    source: "lider_ssr:storeId",
+  };
+}
+
+function productUrl(canonicalUrl: string | null): string | null {
+  if (!canonicalUrl) return null;
+  if (/^https:\/\//i.test(canonicalUrl)) return canonicalUrl;
+  return canonicalUrl.startsWith("/") ? `${LIDER_ORIGIN}${canonicalUrl}` : null;
+}
+
+function normalizeLiderProduct(
+  raw: JsonRecord,
+  branch: BranchContext,
+  observedAt: string,
+  source: string,
+): StoreProductSnapshot | null {
+  const storeProductId = nonEmptyString(raw.usItemId) ?? nonEmptyString(raw.id);
+  const rawName = nonEmptyString(raw.name);
+  if (!storeProductId || !rawName) return null;
+
+  const canonicalUrl = nonEmptyString(raw.canonicalUrl);
+  const pack = liderPackIdentity(rawName);
+  const explicitGtin = explicitGtinCandidate(raw);
+  const derivedCandidate = explicitGtin ? null : deriveLiderEan13Candidate(nonEmptyString(raw.usItemId));
+  const identityCandidates: IdentityCandidate[] = derivedCandidate
+    ? [{
+        kind: "derived_gtin_candidate",
+        value: derivedCandidate,
+        confidence: "candidate",
+        source: "lider_ssr:usItemId_observed_convention",
+      }]
+    : [];
+
+  const priceInfo = recordAt(raw.priceInfo);
+  const weighted = isWeightBasedPrice(priceInfo?.linePrice);
+  const linePrice = moneyValue(priceInfo?.linePrice);
+  const wasPrice = moneyValue(priceInfo?.wasPrice);
+  const currentPrice = weighted ? null : linePrice;
+  const normalPrice = weighted ? null : (wasPrice ?? currentPrice);
+  const unitPrice = weighted ? linePrice : moneyValue(priceInfo?.unitPrice);
+  const promotions = parseBundlePromotions(raw);
+
+  const product: StoreProduct = {
+    store: "lider",
+    storeProductId,
+    sku: nonEmptyString(raw.skuId) ?? nonEmptyString(raw.sku) ?? nonEmptyString(raw.id),
+    gtin: explicitGtin,
+    rawName,
+    brand: nonEmptyString(raw.brand),
+    family: null,
+    variant: null,
+    quantity: weighted ? null : pack.quantity,
+    unit: weighted ? null : pack.unit,
+    packageCount: weighted ? null : pack.packageCount,
+    category: categoryFromUrl(canonicalUrl),
+    url: productUrl(canonicalUrl),
+    imageUrl: null,
+    canonicalProductId: null,
+  };
+
+  const observation: PriceObservation = {
+    store: "lider",
+    storeProductId,
+    branchId: branch.branchId,
+    observedAt,
+    normalPrice,
+    currentPrice,
+    // Positive Mi Club semantics have not yet been observed in the current live contract.
+    memberPrice: null,
+    unitPrice,
+    availability: mapLiderAvailability(raw),
+    promotions,
+    source,
+  };
+
+  return { product, observation, identityCandidates };
+}
+
+function assertObservedAt(value: string): void {
+  if (!value || Number.isNaN(Date.parse(value))) {
+    throw new Error("Lider bridge must provide a valid observedAt timestamp");
+  }
+}
+
+export function parseLiderSearchPayload(
+  nextData: unknown,
+  metadata: { readonly observedAt: string; readonly source: string },
+): ParsedLiderSearch {
+  assertObservedAt(metadata.observedAt);
+  const branch = branchFromPayload(nextData);
+  const collected = collectProductNodes(nextData);
+  const snapshots = collected.products
+    .map((raw) => normalizeLiderProduct(raw, branch, metadata.observedAt, metadata.source))
+    .filter((snapshot): snapshot is StoreProductSnapshot => snapshot !== null);
+
+  return {
+    branch,
+    snapshots,
+    diagnostics: {
+      visitedNodes: collected.visitedNodes,
+      candidateProductNodes: collected.products.length,
+      normalizedProducts: snapshots.length,
+    },
+  };
+}
+
+function sameBranch(left: BranchContext | null, right: BranchContext): boolean {
+  return left !== null && left.branchId === right.branchId && left.scope === right.scope;
+}
+
+export class LiderAdapter implements StoreAdapter {
+  readonly store = "lider" as const;
+
+  private readonly cache = new Map<string, StoreProductSnapshot>();
+  private branch: BranchContext | null = null;
+  private lastSuccessfulSearchAt: string | null = null;
+
+  constructor(private readonly bridge: LiderSearchBridge) {}
+
+  async searchProducts(query: string): Promise<readonly StoreProductSnapshot[]> {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) throw new Error("Lider search query must not be empty");
+
+    const bridgeResult = await this.bridge.search(normalizedQuery);
+    const parsed = parseLiderSearchPayload(bridgeResult.nextData, {
+      observedAt: bridgeResult.observedAt,
+      source: bridgeResult.source,
+    });
+
+    // Never mix cached observations from two browser store contexts.
+    if (this.branch !== null && !sameBranch(this.branch, parsed.branch)) {
+      this.cache.clear();
+    }
+    this.branch = parsed.branch;
+    this.lastSuccessfulSearchAt = bridgeResult.observedAt;
+
+    for (const snapshot of parsed.snapshots) {
+      this.cache.set(snapshot.product.storeProductId, snapshot);
+    }
+    return parsed.snapshots;
+  }
+
+  async getProduct(storeProductId: string): Promise<StoreProductSnapshot | null> {
+    return this.cache.get(storeProductId) ?? null;
+  }
+
+  async getPrices(storeProductIds: readonly string[]): Promise<readonly PriceObservation[]> {
+    return storeProductIds
+      .map((id) => this.cache.get(id)?.observation ?? null)
+      .filter((value): value is PriceObservation => value !== null);
+  }
+
+  async getPromotions(storeProductIds: readonly string[]): Promise<ReadonlyMap<string, readonly Promotion[]>> {
+    const result = new Map<string, readonly Promotion[]>();
+    for (const id of storeProductIds) {
+      const snapshot = this.cache.get(id);
+      if (snapshot) result.set(id, snapshot.observation.promotions);
+    }
+    return result;
+  }
+
+  async getAvailability(storeProductIds: readonly string[]): Promise<ReadonlyMap<string, AvailabilityState>> {
+    const result = new Map<string, AvailabilityState>();
+    for (const id of storeProductIds) {
+      const snapshot = this.cache.get(id);
+      if (snapshot) result.set(id, snapshot.observation.availability);
+    }
+    return result;
+  }
+
+  async resolveBranch(): Promise<BranchContext> {
+    return this.branch ?? {
+      store: "lider",
+      branchId: null,
+      scope: "UNKNOWN",
+      source: "lider_adapter:no_successful_search_yet",
+    };
+  }
+
+  async healthCheck(): Promise<AdapterHealth> {
+    const checkedAt = new Date().toISOString();
+    if (this.bridge.healthCheck) {
+      const result = await this.bridge.healthCheck();
+      return { store: "lider", ok: result.ok, checkedAt, message: result.message };
+    }
+    if (this.lastSuccessfulSearchAt) {
+      return {
+        store: "lider",
+        ok: true,
+        checkedAt,
+        message: `last successful SSR search: ${this.lastSuccessfulSearchAt}`,
+      };
+    }
+    return {
+      store: "lider",
+      ok: false,
+      checkedAt,
+      message: "no successful SSR search has been observed yet",
+    };
+  }
+}
