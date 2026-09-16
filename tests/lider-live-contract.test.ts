@@ -36,6 +36,7 @@ function gs1CheckDigit(payload: string): string {
 function deriveObservedLiderEan13Candidate(usItemId: string): string | null {
   if (!/^00\d{12}$/.test(usItemId)) return null;
   const payload = usItemId.slice(2);
+  if (/^0+$/.test(payload)) return null;
   return `${payload}${gs1CheckDigit(payload)}`;
 }
 
@@ -62,6 +63,12 @@ test("observed Lider usItemId convention reconstructs cross-validated EAN-13 can
       product.derivedEan13,
       product.label,
     );
+  }
+});
+
+test("candidate EAN derivation rejects Lider IDs outside the observed convention", () => {
+  for (const value of ["", "7802920203300", "01780292020330", "00ABC292020330", "00000000000000"]) {
+    assert.equal(deriveObservedLiderEan13Candidate(value), null);
   }
 });
 
