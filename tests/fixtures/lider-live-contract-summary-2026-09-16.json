@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "1.0-lider-live-contract-summary",
+  "capturedAt": "2026-09-16T02:17:49.547Z",
+  "origin": "https://super.lider.cl",
+  "queryCounts": {
+    "mantequilla colun": 4,
+    "leche colun": 44,
+    "arroz banquete": 19,
+    "aceite chef": 8,
+    "fideos carozzi": 31,
+    "azúcar iansa": 50,
+    "huevos": 44,
+    "papel higiénico confort": 32,
+    "coca cola": 25,
+    "pechuga pollo": 44
+  },
+  "totals": {
+    "queries": 10,
+    "products": 301,
+    "queriesWithNextData": 10,
+    "queriesWithChallenge": 0,
+    "productsWithExplicitEanUpcGtin": 0,
+    "productsWithUsItemId": 301,
+    "productsWithNonNullAvailabilityStatus": 0,
+    "productsWithMemberPrice": 0,
+    "productsWithWasPrice": 87,
+    "productsWithCombinaBundle": 15
+  },
+  "observedUsItemIdConvention": {
+    "allAre14DigitsStarting00": true,
+    "candidateRule": "EAN-13 candidate = usItemId[2:] + GS1 check digit",
+    "representativeCrossValidatedProducts": [
+      {
+        "label": "mantequilla-colun-250",
+        "query": "mantequilla colun",
+        "usItemId": "00780292020330",
+        "derivedEan13": "7802920203300",
+        "name": "Mantequilla Con sal, 250 g",
+        "brand": "Colun",
+        "linePrice": 2990,
+        "wasPrice": 3290,
+        "unitPriceText": "$11.960 x kg",
+        "memberPriceString": null,
+        "availabilityStatus": null,
+        "promoFlags": [
+          { "key": "ROLLBACK", "text": "Rebaja", "type": "ICON" }
+        ]
+      },
+      {
+        "label": "leche-colun-entera-1l",
+        "query": "leche colun",
+        "usItemId": "00780292077754",
+        "derivedEan13": "7802920777542",
+        "name": "Leche Entera Natural Caja 1 l, 1 L",
+        "brand": "Colun",
+        "linePrice": 1290,
+        "wasPrice": null,
+        "unitPriceText": "$1.290 x lt",
+        "memberPriceString": null,
+        "availabilityStatus": null,
+        "promoFlags": []
+      },
+      {
+        "label": "azucar-iansa-1kg",
+        "query": "azúcar iansa",
+        "usItemId": "00780150523191",
+        "derivedEan13": "7801505231912",
+        "name": "Azúcar Blanca Granulada Bolsa, 1 Kg",
+        "brand": "Iansa",
+        "linePrice": 1390,
+        "wasPrice": null,
+        "unitPriceText": "$1.390 x kg",
+        "memberPriceString": null,
+        "availabilityStatus": null,
+        "promoFlags": []
+      },
+      {
+        "label": "banquete-grado1-1kg",
+        "query": "arroz banquete",
+        "usItemId": "00780311010221",
+        "derivedEan13": "7803110102212",
+        "name": "Arroz Grado 1 Grano Largo Bolsa., 1 kg",
+        "brand": "Banquete",
+        "linePrice": 1690,
+        "wasPrice": 2250,
+        "unitPriceText": "$1.690 x kg",
+        "memberPriceString": null,
+        "availabilityStatus": null,
+        "promoFlags": [
+          { "key": "ROLLBACK", "text": "Rebaja", "type": "ICON" }
+        ]
+      },
+      {
+        "label": "coca-original-591",
+        "query": "coca cola",
+        "usItemId": "00780161000057",
+        "derivedEan13": "7801610000571",
+        "name": "Bebida Botella sabor Original, 591 ml",
+        "brand": "Coca-cola",
+        "linePrice": 1290,
+        "wasPrice": null,
+        "unitPriceText": "$2.186 x lt",
+        "memberPriceString": null,
+        "availabilityStatus": null,
+        "promoFlags": [
+          { "key": "COMBINA", "text": "Combina 2 x $1.950", "type": "LABEL" }
+        ]
+      },
+      {
+        "label": "coca-light-591",
+        "query": "coca cola",
+        "usItemId": "00780161000059",
+        "derivedEan13": "7801610000595",
+        "name": "Bebida Botella Light, 591 ml",
+        "brand": "Coca-cola",
+        "linePrice": 1290,
+        "wasPrice": null,
+        "unitPriceText": "$2.183 x lt",
+        "memberPriceString": null,
+        "availabilityStatus": null,
+        "promoFlags": [
+          { "key": "COMBINA", "text": "Combina 2 x $1.950", "type": "LABEL" }
+        ]
+      }
+    ]
+  }
+}
