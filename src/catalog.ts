@@ -1,7 +1,7 @@
 export const STORE_IDS = ["jumbo", "unimarc", "lider"] as const;
 export type StoreId = (typeof STORE_IDS)[number];
 
-export const BASE_UNITS = ["g", "ml", "un"] as const;
+export const BASE_UNITS = ["g", "ml", "un", "m"] as const;
 export type BaseUnit = (typeof BASE_UNITS)[number];
 
 export interface CanonicalProduct {
@@ -51,7 +51,6 @@ export type MatchDecision =
       strategy: "incompatible" | "insufficient";
       reasons: string[];
     };
-
 
 const SPACE_RE = /\s+/g;
 const NON_ALNUM_RE = /[^a-z0-9]+/g;
@@ -104,7 +103,7 @@ export interface ParsedPackSize {
 }
 
 const DECIMAL = "(\\d+(?:[.,]\\d+)?)";
-const UNIT = "(kg|kilos?|g|grs?|gramos?|l|lt|litros?|ml|cc|un|u|unidad(?:es)?)";
+const UNIT = "(kg|kilos?|g|grs?|gramos?|l|lt|litros?|ml|cc|m|mt|mts|metros?|un|u|unidad(?:es)?)";
 
 function toBaseQuantity(rawQuantity: string, rawUnit: string): Pick<ParsedPackSize, "quantity" | "unit"> | null {
   const quantity = Number(rawQuantity.replace(",", "."));
@@ -115,6 +114,7 @@ function toBaseQuantity(rawQuantity: string, rawUnit: string): Pick<ParsedPackSi
   if (["g", "gr", "grs", "gramo", "gramos"].includes(unit)) return { quantity: Math.round(quantity), unit: "g" };
   if (["l", "lt", "litro", "litros"].includes(unit)) return { quantity: Math.round(quantity * 1000), unit: "ml" };
   if (["ml", "cc"].includes(unit)) return { quantity: Math.round(quantity), unit: "ml" };
+  if (["m", "mt", "mts", "metro", "metros"].includes(unit)) return { quantity, unit: "m" };
   if (["un", "u", "unidad", "unidades"].includes(unit)) return { quantity: Math.round(quantity), unit: "un" };
   return null;
 }
@@ -129,8 +129,9 @@ export function parsePackSize(rawName: string): ParsedPackSize | null {
     .replace(SPACE_RE, " ")
     .trim();
 
-  // Safe single-format packs: "6 un de 350 ml", "6 unidades x 350 ml".
-  const explicitPack = text.match(new RegExp(`\\b(\\d+)\\s*(?:un|u|unidad(?:es)?)\\s*(?:de|x)\\s*${DECIMAL}\\s*${UNIT}\\b`, "i"));
+  // Safe single-format packs: "6 un de 350 ml", "6 unidades x 350 ml",
+  // and retailer names such as "12 un 27 mt" where the separator is omitted.
+  const explicitPack = text.match(new RegExp(`\\b(\\d+)\\s*(?:un|u|unidad(?:es)?)\\s*(?:(?:de|x)\\s*)?${DECIMAL}\\s*${UNIT}\\b`, "i"));
   if (explicitPack) {
     const packageCount = Number(explicitPack[1]);
     const base = toBaseQuantity(explicitPack[2] ?? "", explicitPack[3] ?? "");
@@ -167,8 +168,6 @@ export function enrichPackSize(product: StoreProduct): StoreProduct {
   };
 }
 
-
-
 const STOPWORDS = new Set([
   "de", "del", "la", "las", "el", "los", "con", "sin", "para", "por", "y", "o",
   "un", "una", "unidad", "unidades", "pack", "pote", "botella", "lata", "desechable",
@@ -187,7 +186,7 @@ function comparableTokens(value: string): Set<string> {
     .filter(Boolean)
     .filter((token) => !STOPWORDS.has(token))
     .filter((token) => !/^\d+(?:[.,]\d+)?$/.test(token))
-    .filter((token) => !["g", "gr", "kg", "ml", "cc", "l", "lt"].includes(token));
+    .filter((token) => !["g", "gr", "kg", "ml", "cc", "l", "lt", "m", "mt", "mts"].includes(token));
   return new Set(tokens);
 }
 
