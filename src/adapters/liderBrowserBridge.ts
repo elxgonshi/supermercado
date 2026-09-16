@@ -50,15 +50,17 @@ interface BrowserInspection {
  * bridge. The LiderAdapter immediately reduces it to normalized public fields.
  */
 export class LiderLocalBrowserBridge implements LiderSearchBridge {
+  private readonly page: LocalBrowserPagePort;
   private readonly timeoutMs: number;
   private readonly minIntervalMs: number;
   private lastStartedAt = 0;
   private queue: Promise<void> = Promise.resolve();
 
   constructor(
-    private readonly page: LocalBrowserPagePort,
+    page: LocalBrowserPagePort,
     options: LiderLocalBrowserBridgeOptions = {},
   ) {
+    this.page = page;
     this.timeoutMs = options.timeoutMs ?? 25_000;
     this.minIntervalMs = options.minIntervalMs ?? 1_500;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0) {
