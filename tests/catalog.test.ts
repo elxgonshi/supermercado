@@ -40,6 +40,39 @@ test("GTIN validation accepts valid values and rejects invalid checksums", () =>
   assert.equal(normalizeGtin("7802920203301"), null);
 });
 
+test("GTIN normalization rejects all-zero feed placeholders", () => {
+  for (const gtin of ["00000000", "000000000000", "0000000000000", "00000000000000"]) {
+    assert.equal(normalizeGtin(gtin), null);
+  }
+});
+
+test("all-zero placeholders can never establish gtin_exact identity", () => {
+  const left = product({
+    gtin: "0000000000000",
+    brand: null,
+    family: null,
+    variant: null,
+    quantity: null,
+    unit: null,
+    packageCount: null,
+    rawName: "Producto A",
+  });
+  const right = product({
+    store: "unimarc",
+    gtin: "0000000000000",
+    brand: null,
+    family: null,
+    variant: null,
+    quantity: null,
+    unit: null,
+    packageCount: null,
+    rawName: "Producto B",
+  });
+  const result = matchStoreProducts(left, right);
+  assert.notEqual(result.strategy, "gtin_exact");
+  assert.notEqual(result.kind, "confirmed");
+});
+
 for (const [name, expected] of [
   ["Mantequilla Colun 250 g", { quantity: 250, unit: "g", packageCount: 1 }],
   ["Azúcar Iansa 1.7 Kg", { quantity: 1700, unit: "g", packageCount: 1 }],
@@ -47,6 +80,14 @@ for (const [name, expected] of [
   ["Bebida Coca Cola botella 591 ml", { quantity: 591, unit: "ml", packageCount: 1 }],
   ["Pack bebida lata 6 un de 350 ml", { quantity: 350, unit: "ml", packageCount: 6 }],
   ["Pack agua 2 x 1.5 L", { quantity: 1500, unit: "ml", packageCount: 2 }],
+  ["Arroz 1.000 g", { quantity: 1000, unit: "g", packageCount: 1 }],
+  ["Arroz 1,000 g", { quantity: 1000, unit: "g", packageCount: 1 }],
+  ["Bebida 1,500 ml", { quantity: 1500, unit: "ml", packageCount: 1 }],
+  ["Bebida 1,5 L", { quantity: 1500, unit: "ml", packageCount: 1 }],
+  ["Bebida 1.5 L", { quantity: 1500, unit: "ml", packageCount: 1 }],
+  ["Harina 1.000 kg", { quantity: 1000, unit: "g", packageCount: 1 }],
+  ["Sazonador 1.5 g", { quantity: 1.5, unit: "g", packageCount: 1 }],
+  ["Sazonador 0.250 g", { quantity: 0.25, unit: "g", packageCount: 1 }],
 ] as const) {
   test(`parsePackSize parses ${name}`, () => {
     assert.deepEqual(parsePackSize(name), expected);
