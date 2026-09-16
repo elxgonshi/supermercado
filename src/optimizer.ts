@@ -22,11 +22,8 @@ export interface PricedStoreProduct {
 export type AvailabilityPolicy = "require_available" | "allow_unknown";
 
 export interface OptimizeOptions {
-  /** Cadenas donde el usuario puede acceder a precio/promoción de socio. */
   memberStores?: readonly StoreId[];
-  /** Por defecto UNKNOWN no se considera comprable. */
   availabilityPolicy?: AvailabilityPolicy;
-  /** Límite matemático de cadenas del plan final. */
   maxStores?: number;
 }
 
@@ -103,6 +100,8 @@ interface LineCost {
 }
 
 function assertBasket(items: readonly BasketItem[]): void {
+  if (items.length === 0) throw new Error("Basket must contain at least one item");
+
   const ids = new Set<string>();
   for (const item of items) {
     if (!item.id.trim()) throw new Error("Basket item id must not be empty");
@@ -114,6 +113,13 @@ function assertBasket(items: readonly BasketItem[]): void {
     if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
       throw new Error(`Basket item ${item.id} quantity must be a positive integer`);
     }
+  }
+}
+
+function assertMaxStores(maxStores: number | undefined): void {
+  if (maxStores === undefined) return;
+  if (!Number.isInteger(maxStores) || maxStores <= 0) {
+    throw new Error("maxStores must be a positive integer");
   }
 }
 
@@ -147,7 +153,7 @@ function collapseToLatestOffers(offers: readonly PricedStoreProduct[]): PricedSt
   return [...latest.values()];
 }
 
-/** Prevents a basket from silently combining prices from two branches of one chain. */
+/** No permite mezclar precios de dos sucursales/contextos de la misma cadena. */
 function assertSingleBranchContextPerStore(offers: readonly PricedStoreProduct[]): void {
   const contexts = new Map<StoreId, Set<string>>();
   for (const offer of offers) {
@@ -170,10 +176,7 @@ function offerAllowed(observation: PriceObservation, policy: AvailabilityPolicy)
   return true;
 }
 
-function maxBundleApplications(
-  promotion: BundlePromotion,
-  quantity: number,
-): number {
+function maxBundleApplications(promotion: BundlePromotion, quantity: number): number {
   const structuralMax = Math.floor(quantity / promotion.requiredQuantity);
   if (structuralMax <= 0) return 0;
   if (promotion.maxApplications !== null) {
@@ -185,7 +188,6 @@ function maxBundleApplications(
 function betterLineCost(candidate: LineCost, current: LineCost | null): boolean {
   if (!current) return true;
   if (candidate.total !== current.total) return candidate.total < current.total;
-  // If totals tie, prefer the simpler non-bundle calculation.
   if (candidate.pricingMode !== current.pricingMode) return candidate.pricingMode === "unit";
   if (candidate.usesMembership !== current.usesMembership) return !candidate.usesMembership;
   return false;
@@ -243,8 +245,11 @@ function lineFromOffer(
   offer: PricedStoreProduct,
   memberStores: ReadonlySet<StoreId>,
 ): OptimizedLine | null {
-  const hasMembership = memberStores.has(offer.storeProduct.store);
-  const cost = priceLine(item.quantity, offer.observation, hasMembership);
+  const cost = priceLine(
+    item.quantity,
+    offer.observation,
+    memberStores.has(offer.storeProduct.store),
+  );
   if (!cost) return null;
 
   return {
@@ -269,6 +274,19 @@ function lineFromOffer(
   };
 }
 
+function lineIsEligible(
+  item: BasketItem,
+  offer: PricedStoreProduct,
+  memberStores: ReadonlySet<StoreId>,
+  availabilityPolicy: AvailabilityPolicy,
+): boolean {
+  return (
+    offer.storeProduct.canonicalProductId === item.canonicalProductId &&
+    offerAllowed(offer.observation, availabilityPolicy) &&
+    lineFromOffer(item, offer, memberStores) !== null
+  );
+}
+
 function compareLines(a: OptimizedLine, b: OptimizedLine): number {
   if (a.lineTotal !== b.lineTotal) return a.lineTotal - b.lineTotal;
   if (a.uncertainAvailability !== b.uncertainAvailability) return a.uncertainAvailability ? 1 : -1;
@@ -291,22 +309,15 @@ function evaluateStoreSubset(
 
   for (const item of items) {
     const candidates = offers
-      .filter(
-        (offer) =>
-          allowedStores.has(offer.storeProduct.store) &&
-          offer.storeProduct.canonicalProductId === item.canonicalProductId &&
-          offerAllowed(offer.observation, availabilityPolicy),
-      )
+      .filter((offer) => allowedStores.has(offer.storeProduct.store))
+      .filter((offer) => lineIsEligible(item, offer, memberStores, availabilityPolicy))
       .map((offer) => lineFromOffer(item, offer, memberStores))
       .filter((line): line is OptimizedLine => line !== null)
       .sort(compareLines);
 
     const best = candidates[0];
-    if (!best) {
-      missingItemIds.push(item.id);
-      continue;
-    }
-    lines.push(best);
+    if (!best) missingItemIds.push(item.id);
+    else lines.push(best);
   }
 
   if (missingItemIds.length > 0) {
@@ -316,10 +327,9 @@ function evaluateStoreSubset(
   const usedStores = STORE_IDS.filter((store) => lines.some((line) => line.store === store));
   const byStore: StorePlanSegment[] = usedStores.map((store) => {
     const storeItems = lines.filter((line) => line.store === store);
-    const branchId = storeItems[0]?.branchId ?? null;
     return {
       store,
-      branchId,
+      branchId: storeItems[0]?.branchId ?? null,
       items: storeItems,
       subtotal: storeItems.reduce((sum, line) => sum + line.lineTotal, 0),
     };
@@ -375,6 +385,8 @@ export function optimizeBasket(
   options: OptimizeOptions = {},
 ): OptimizationResult {
   assertBasket(items);
+  assertMaxStores(options.maxStores);
+
   const offers = collapseToLatestOffers(rawOffers);
   assertSingleBranchContextPerStore(offers);
 
@@ -382,13 +394,28 @@ export function optimizeBasket(
   const availabilityPolicy = options.availabilityPolicy ?? "require_available";
   const activeStores = STORE_IDS.filter((store) => offers.some((offer) => offer.storeProduct.store === store));
 
+  const unresolvedItemIds = items
+    .filter((item) => !offers.some((offer) => lineIsEligible(item, offer, memberStores, availabilityPolicy)))
+    .map((item) => item.id);
+
+  if (activeStores.length === 0) {
+    return {
+      singleStorePlans: [],
+      bestByStoreLimit: [],
+      bestSingleStore: null,
+      bestTwoStores: null,
+      unrestricted: null,
+      optimalPlan: null,
+      unresolvedItemIds,
+    };
+  }
+
   const singleStorePlans = activeStores.map((store) =>
     evaluateStoreSubset(items, offers, [store], memberStores, availabilityPolicy),
   );
   const bestSingleStore = bestFeasible(singleStorePlans);
 
-  const subsets = enumerateStoreSubsets(activeStores, activeStores.length);
-  const evaluations = subsets.map((stores) =>
+  const evaluations = enumerateStoreSubsets(activeStores, activeStores.length).map((stores) =>
     evaluateStoreSubset(items, offers, stores, memberStores, availabilityPolicy),
   );
 
@@ -404,29 +431,12 @@ export function optimizeBasket(
   }
 
   const unrestricted = bestByStoreLimit.at(-1)?.plan ?? null;
-  const bestTwoStores = bestByStoreLimit.find((entry) => entry.maxStores === 2)?.plan ?? unrestricted;
+  const twoStoreEntry = bestByStoreLimit.find((entry) => entry.maxStores === 2);
+  const bestTwoStores = twoStoreEntry ? twoStoreEntry.plan : unrestricted;
 
   const requestedLimit = options.maxStores ?? activeStores.length;
-  if (!Number.isInteger(requestedLimit) || requestedLimit <= 0) {
-    throw new Error("maxStores must be a positive integer");
-  }
   const cappedLimit = Math.min(requestedLimit, activeStores.length);
   const optimalPlan = bestByStoreLimit.find((entry) => entry.maxStores === cappedLimit)?.plan ?? null;
-
-  const globallyEligibleCanonicalIds = new Set(
-    offers
-      .filter((offer) => offerAllowed(offer.observation, availabilityPolicy))
-      .filter((offer) => lineFromOffer(
-        { id: "__probe__", canonicalProductId: offer.storeProduct.canonicalProductId ?? "", quantity: 1 },
-        offer,
-        memberStores,
-      ) !== null)
-      .map((offer) => offer.storeProduct.canonicalProductId),
-  );
-
-  const unresolvedItemIds = items
-    .filter((item) => !globallyEligibleCanonicalIds.has(item.canonicalProductId))
-    .map((item) => item.id);
 
   return {
     singleStorePlans,
