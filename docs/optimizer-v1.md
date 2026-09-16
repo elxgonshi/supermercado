@@ -10,6 +10,8 @@ Entrada conceptual:
 
 El objetivo es minimizar el costo de la canasta bajo un máximo de supermercados, manteniendo por separado la evidencia de precio, promociones, membresía y disponibilidad.
 
+Las únicas cadenas admitidas por esta versión son **Jumbo y Unimarc**. Si recibe una oferta de Líder, falla explícitamente en vez de asumir que su semántica de precio, promoción y stock ya fue validada.
+
 ## Semántica de precio
 
 - `normalPrice`: precio de lista observado.
@@ -48,6 +50,10 @@ Los sentinels observados como `10000`/`99999` no se convierten en cantidad físi
 
 El precio puede depender de sucursal. Una corrida del optimizador no puede mezclar dos `branchId` distintos de una misma cadena. El caller debe preseleccionar un único contexto de sucursal por supermercado.
 
+## Historial
+
+`PriceObservation` se modela como valor inmutable. Una nueva lectura genera otra observación; no se modifica la anterior. Si la entrada contiene varias observaciones del mismo `storeProductId` y sucursal, el optimizador usa la más reciente por `observedAt`.
+
 ## Salidas
 
 El resultado expone:
@@ -64,7 +70,7 @@ El ahorro marginal se muestra como dato. El motor no decide que una segunda tien
 
 ## Fuera de alcance v1
 
-- Líder.
+- Líder: cualquier oferta de esa cadena se rechaza hasta validar su adapter y contrato.
 - despacho y costo fijo por tienda;
 - mínimos de compra;
 - tarjetas bancarias;
