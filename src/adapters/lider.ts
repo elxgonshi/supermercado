@@ -23,6 +23,8 @@ const LIDER_ORIGIN = "https://super.lider.cl";
 const MAX_WALK_DEPTH = 24;
 const MAX_WALK_NODES = 150_000;
 
+type JsonRecord = Record<string, unknown>;
+
 export interface LiderBridgeSearchResult {
   readonly nextData: unknown;
   readonly observedAt: string;
@@ -34,11 +36,7 @@ export interface LiderBridgeHealth {
   readonly message: string;
 }
 
-/**
- * Browser transport boundary. A Playwright/local-browser implementation can
- * satisfy this interface without leaking browser/session details into the
- * central catalog code.
- */
+/** Browser transport boundary; browser/session details stay outside the adapter. */
 export interface LiderSearchBridge {
   search(query: string): Promise<LiderBridgeSearchResult>;
   healthCheck?(): Promise<LiderBridgeHealth>;
@@ -53,8 +51,6 @@ export interface ParsedLiderSearch {
     readonly normalizedProducts: number;
   };
 }
-
-type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -82,12 +78,9 @@ function gs1CheckDigit(payload: string): string | null {
 }
 
 /**
- * Current Líder search SSR uses `00` + 12 digits as `usItemId` for regular
- * packaged products. This can reconstruct an EAN-13 candidate, but it is NOT
- * authoritative identity and must never be assigned directly to StoreProduct.gtin.
- *
- * Observed variable-weight/internal merchandise uses a payload starting with 2;
- * those IDs are explicitly excluded from candidate derivation.
+ * Current packaged-product SSR often uses `00` + 12 digits as usItemId.
+ * Reconstructing the EAN-13 is candidate evidence only, never authoritative GTIN.
+ * Observed variable-weight/internal payloads beginning with 2 are excluded.
  */
 export function deriveLiderEan13Candidate(usItemId: string | null | undefined): string | null {
   if (!usItemId || !/^00\d{12}$/.test(usItemId)) return null;
@@ -101,9 +94,9 @@ export function deriveLiderEan13Candidate(usItemId: string | null | undefined): 
 
 function explicitGtinCandidate(product: JsonRecord): string | null {
   const normalized = [product.gtin, product.ean, product.upc]
-    .map((value) => nonEmptyString(value))
+    .map(nonEmptyString)
     .filter((value): value is string => value !== null)
-    .map((value) => normalizeGtin(value))
+    .map(normalizeGtin)
     .filter((value): value is string => value !== null);
   const distinct = [...new Set(normalized)];
   return distinct.length === 1 ? distinct[0] ?? null : null;
@@ -149,7 +142,7 @@ function liderPackIdentity(rawName: string): {
     };
   }
 
-  // "Pack Lata, 6 Un" identifies the number of units, not a per-unit content.
+  // `Pack Lata, 6 Un` gives only the count, not per-can content.
   const trailingUnits = normalized.match(/\b(\d+)\s+(?:un|u|unidad|unidades)$/);
   if (trailingUnits?.[1]) {
     const count = Number(trailingUnits[1]);
@@ -160,8 +153,10 @@ function liderPackIdentity(rawName: string): {
     };
   }
 
-  // Current names also use forms such as "Pack 3 Botella, 3 L".
-  const explicitContainerCount = normalized.match(/\bpack\s+(\d+)\s+(?:botella|botellas|lata|latas|unidad|unidades)\b/);
+  // Current names also use forms such as `Pack 3 Botella, 3 L`.
+  const explicitContainerCount = normalized.match(
+    /\bpack\s+(\d+)\s+(?:botella|botellas|lata|latas|unidad|unidades)\b/,
+  );
   if (explicitContainerCount?.[1]) {
     const count = Number(explicitContainerCount[1]);
     return {
@@ -173,8 +168,7 @@ function liderPackIdentity(rawName: string): {
 
   if (parsed && parsed.packageCount > 1) return parsed;
 
-  // A name containing "pack" without an explicit count is not safe to treat as
-  // a single retail unit for cross-store exact matching.
+  // A pack with no explicit count is not safe to model as a single retail unit.
   return {
     quantity: parsed?.unit === "un" ? null : (parsed?.quantity ?? null),
     unit: parsed?.unit === "un" ? null : (parsed?.unit ?? null),
@@ -193,18 +187,14 @@ export function mapLiderAvailability(product: JsonRecord): AvailabilityState {
     isOutOfStock === false &&
     canAddToCart === true &&
     showAtc === true
-  ) {
-    return "AVAILABLE";
-  }
+  ) return "AVAILABLE";
 
   if (
     display === "out of stock" &&
     isOutOfStock === true &&
     canAddToCart === false &&
     showAtc === false
-  ) {
-    return "UNAVAILABLE";
-  }
+  ) return "UNAVAILABLE";
 
   return "UNKNOWN";
 }
@@ -238,6 +228,9 @@ function parseBundlePromotions(product: JsonRecord): readonly BundlePromotion[] 
       memberOnly: false,
       repeatability: "unknown",
       maxApplications: null,
+      // `COMBINA` may be a qualifying-product group. Until the eligibility
+      // contract is observed, the exact-product optimizer must not apply it.
+      applicationScope: "unknown",
       sourceText: text,
     });
   }
@@ -374,7 +367,10 @@ function normalizeLiderProduct(
   const linePrice = moneyValue(priceInfo?.linePrice);
   const wasPrice = moneyValue(priceInfo?.wasPrice);
   const currentPrice = weighted ? null : linePrice;
-  const normalPrice = weighted ? null : (wasPrice ?? currentPrice);
+  const safeWasPrice = currentPrice !== null && wasPrice !== null && wasPrice >= currentPrice
+    ? wasPrice
+    : null;
+  const normalPrice = weighted ? null : (safeWasPrice ?? currentPrice);
   const unitPrice = weighted ? linePrice : moneyValue(priceInfo?.unitPrice);
   const promotions = parseBundlePromotions(raw);
 
@@ -449,11 +445,14 @@ function sameBranch(left: BranchContext | null, right: BranchContext): boolean {
 export class LiderAdapter implements StoreAdapter {
   readonly store = "lider" as const;
 
+  private readonly bridge: LiderSearchBridge;
   private readonly cache = new Map<string, StoreProductSnapshot>();
   private branch: BranchContext | null = null;
   private lastSuccessfulSearchAt: string | null = null;
 
-  constructor(private readonly bridge: LiderSearchBridge) {}
+  constructor(bridge: LiderSearchBridge) {
+    this.bridge = bridge;
+  }
 
   async searchProducts(query: string): Promise<readonly StoreProductSnapshot[]> {
     const normalizedQuery = query.trim();
