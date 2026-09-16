@@ -1,0 +1,108 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  isValidGtin,
+  matchStoreProducts,
+  normalizeGtin,
+  normalizeText,
+  parsePackSize,
+  type StoreProduct,
+} from "../src/catalog.ts";
+
+function product(overrides: Partial<StoreProduct> = {}): StoreProduct {
+  return {
+    store: "jumbo",
+    storeProductId: "base",
+    sku: null,
+    gtin: null,
+    rawName: "Mantequilla Colun con sal 250 g",
+    brand: "Colun",
+    family: "Mantequilla",
+    variant: "con sal",
+    quantity: 250,
+    unit: "g",
+    packageCount: 1,
+    category: null,
+    url: null,
+    imageUrl: null,
+    canonicalProductId: null,
+    ...overrides,
+  };
+}
+
+test("normalizeText normalizes accents, case and punctuation", () => {
+  assert.equal(normalizeText("Azúcar Rubia IANSA, 500 g"), "azucar rubia iansa 500 g");
+});
+
+test("GTIN validation accepts valid values and rejects invalid checksums", () => {
+  assert.equal(isValidGtin("7802920203300"), true);
+  assert.equal(normalizeGtin("7802920203300"), "7802920203300");
+  assert.equal(normalizeGtin("7802920203301"), null);
+});
+
+for (const [name, expected] of [
+  ["Mantequilla Colun 250 g", { quantity: 250, unit: "g", packageCount: 1 }],
+  ["Azúcar Iansa 1.7 Kg", { quantity: 1700, unit: "g", packageCount: 1 }],
+  ["Bebida Coca Cola 1 L", { quantity: 1000, unit: "ml", packageCount: 1 }],
+  ["Bebida Coca Cola botella 591 ml", { quantity: 591, unit: "ml", packageCount: 1 }],
+  ["Pack bebida lata 6 un de 350 ml", { quantity: 350, unit: "ml", packageCount: 6 }],
+  ["Pack agua 2 x 1.5 L", { quantity: 1500, unit: "ml", packageCount: 2 }],
+] as const) {
+  test(`parsePackSize parses ${name}`, () => {
+    assert.deepEqual(parsePackSize(name), expected);
+  });
+}
+
+test("parsePackSize does not guess mixed-format packs", () => {
+  assert.equal(parsePackSize("Pack Coca Cola 2 un de 3 L + Sprite 1 un de 3 L"), null);
+});
+
+test("matching confirms exact valid GTIN first", () => {
+  const left = product({ gtin: "7802920203300" });
+  const right = product({ store: "unimarc", storeProductId: "410", rawName: "Mantequilla Colun con sal pan 250 g", gtin: "7802920203300" });
+  const result = matchStoreProducts(left, right);
+  assert.equal(result.kind, "confirmed");
+  assert.equal(result.strategy, "gtin_exact");
+});
+
+test("matching rejects different valid GTINs even when names are similar", () => {
+  const left = product({ gtin: "7802920203300" });
+  const right = product({ store: "unimarc", gtin: "7802920203102" });
+  assert.deepEqual(matchStoreProducts(left, right), {
+    kind: "no_match",
+    strategy: "incompatible",
+    reasons: ["valid GTIN differs"],
+  });
+});
+
+test("matching confirms deterministic attributes when GTIN is unavailable", () => {
+  const result = matchStoreProducts(product(), product({ store: "unimarc", storeProductId: "410" }));
+  assert.equal(result.kind, "confirmed");
+  assert.equal(result.strategy, "deterministic");
+});
+
+test("matching rejects different variants", () => {
+  const left = product({ variant: "con sal" });
+  const right = product({ store: "unimarc", variant: "sin sal", rawName: "Mantequilla Colun sin sal 250 g" });
+  assert.equal(matchStoreProducts(left, right).kind, "no_match");
+});
+
+test("matching rejects different package counts", () => {
+  const left = product({ rawName: "Bebida Coca Cola 350 ml", brand: "Coca Cola", family: "Bebida", variant: "original", quantity: 350, unit: "ml", packageCount: 1 });
+  const right = product({ store: "unimarc", rawName: "Pack Bebida Coca Cola original 6 un de 350 ml", brand: "Coca Cola", family: "Bebida", variant: "original", quantity: 350, unit: "ml", packageCount: 6 });
+  assert.equal(matchStoreProducts(left, right).kind, "no_match");
+});
+
+test("strong text-only similarity goes to review, never auto-confirms", () => {
+  const left = product({ brand: null, family: null, variant: null, quantity: null, unit: null, packageCount: null, rawName: "Detergente líquido Ariel concentrado 3 L" });
+  const right = product({ store: "unimarc", brand: null, family: null, variant: null, quantity: null, unit: null, packageCount: null, rawName: "Detergente liquido Ariel concentrado 3 litros" });
+  const result = matchStoreProducts(left, right, { reviewThreshold: 0.6 });
+  assert.equal(result.kind, "review");
+  assert.equal(result.strategy, "textual_review");
+});
+
+test("similar volume alone does not make products equal", () => {
+  const left = product({ brand: "Coca Cola", family: "Bebida", variant: "original", quantity: 1000, unit: "ml", rawName: "Bebida Coca Cola original 1 L" });
+  const right = product({ store: "unimarc", brand: "Sprite", family: "Bebida", variant: "original", quantity: 1000, unit: "ml", rawName: "Bebida Sprite original 1 L" });
+  assert.equal(matchStoreProducts(left, right).kind, "no_match");
+});
