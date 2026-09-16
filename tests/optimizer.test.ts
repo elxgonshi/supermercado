@@ -37,7 +37,7 @@ function observation(
   return {
     store,
     storeProductId,
-    branchId: store === "jumbo" ? "jumboclj955" : "unimarc-selected",
+    branchId: store === "jumbo" ? "jumboclj955" : `${store}-selected`,
     observedAt: "2026-09-16T00:00:00.000Z",
     normalPrice: 2000,
     currentPrice: 2000,
@@ -170,6 +170,27 @@ test("overlapping web price and quantity bundle keep the cheaper valid combinati
   assert.equal(priced?.pricingMode, "bundle");
 });
 
+test("bundle-only pricing resolves the actual requested quantity", () => {
+  const basket: BasketItem[] = [{ id: "promo", canonicalProductId: "promo-product", quantity: 2 }];
+  const bundleOnly = offer("unimarc", "promo-product", "u-promo", {
+    normalPrice: null,
+    currentPrice: null,
+    promotions: [{
+      kind: "bundle",
+      requiredQuantity: 2,
+      totalPrice: 2000,
+      memberOnly: false,
+      repeatability: "unknown",
+      maxApplications: null,
+      sourceText: "2 x $2.000",
+    }],
+  });
+
+  const result = optimizeBasket(basket, [bundleOnly]);
+  assert.equal(result.unrestricted?.total, 2000);
+  assert.deepEqual(result.unresolvedItemIds, []);
+});
+
 test("UNAVAILABLE offers are excluded", () => {
   const result = optimizeBasket(oneItem, [
     offer("jumbo", "milk-colun-1l", "j-milk", { currentPrice: 1900 }),
@@ -212,6 +233,14 @@ test("optimizer refuses to mix two branch contexts from the same chain", () => {
   );
 });
 
+test("no offers returns unresolved items instead of throwing", () => {
+  const result = optimizeBasket(oneItem, []);
+  assert.equal(result.unrestricted, null);
+  assert.equal(result.optimalPlan, null);
+  assert.deepEqual(result.unresolvedItemIds, ["milk"]);
+  assert.deepEqual(result.bestByStoreLimit, []);
+});
+
 test("single-store and split plans expose marginal savings instead of assuming another store is worth it", () => {
   const basket: BasketItem[] = [
     { id: "milk", canonicalProductId: "milk", quantity: 1 },
@@ -251,6 +280,25 @@ test("if splitting saves nothing, store-limit marginal saving is zero and one st
   assert.equal(result.bestByStoreLimit[1]?.marginalSaving, 0);
 });
 
+test("bestTwoStores never falls back to a three-store plan", () => {
+  const basket: BasketItem[] = [
+    { id: "a", canonicalProductId: "a", quantity: 1 },
+    { id: "b", canonicalProductId: "b", quantity: 1 },
+    { id: "c", canonicalProductId: "c", quantity: 1 },
+  ];
+  const offers = [
+    offer("jumbo", "a", "j-a", { currentPrice: 1000 }),
+    offer("unimarc", "b", "u-b", { currentPrice: 1000 }),
+    offer("lider", "c", "l-c", { currentPrice: 1000 }),
+  ];
+
+  const result = optimizeBasket(basket, offers);
+  assert.equal(result.bestSingleStore, null);
+  assert.equal(result.bestTwoStores, null);
+  assert.equal(result.unrestricted?.storeCount, 3);
+  assert.equal(result.unrestricted?.total, 3000);
+});
+
 test("maxStores selects the mathematical optimum under the requested constraint", () => {
   const basket: BasketItem[] = [
     { id: "milk", canonicalProductId: "milk", quantity: 1 },
@@ -265,6 +313,11 @@ test("maxStores selects the mathematical optimum under the requested constraint"
 
   assert.equal(optimizeBasket(basket, offers, { maxStores: 1 }).optimalPlan?.total, 2500);
   assert.equal(optimizeBasket(basket, offers, { maxStores: 2 }).optimalPlan?.total, 2000);
+});
+
+test("empty baskets and invalid maxStores are rejected", () => {
+  assert.throws(() => optimizeBasket([], []), /at least one item/);
+  assert.throws(() => optimizeBasket(oneItem, [], { maxStores: 0 }), /positive integer/);
 });
 
 test("exact-product optimizer does not use offers lacking a canonical link", () => {
