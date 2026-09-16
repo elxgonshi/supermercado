@@ -22,7 +22,6 @@ import type {
 const LIDER_ORIGIN = "https://super.lider.cl";
 const MAX_WALK_DEPTH = 24;
 const MAX_WALK_NODES = 150_000;
-
 type JsonRecord = Record<string, unknown>;
 
 export interface LiderBridgeSearchResult {
@@ -36,7 +35,6 @@ export interface LiderBridgeHealth {
   readonly message: string;
 }
 
-/** Browser transport boundary; browser/session details stay outside the adapter. */
 export interface LiderSearchBridge {
   search(query: string): Promise<LiderBridgeSearchResult>;
   healthCheck?(): Promise<LiderBridgeHealth>;
@@ -59,7 +57,7 @@ function isRecord(value: unknown): value is JsonRecord {
 function nonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  return trimmed ? trimmed : null;
+  return trimmed || null;
 }
 
 function recordAt(value: unknown): JsonRecord | null {
@@ -77,11 +75,7 @@ function gs1CheckDigit(payload: string): string | null {
   return String((10 - (sum % 10)) % 10);
 }
 
-/**
- * Current packaged-product SSR often uses `00` + 12 digits as usItemId.
- * Reconstructing the EAN-13 is candidate evidence only, never authoritative GTIN.
- * Observed variable-weight/internal payloads beginning with 2 are excluded.
- */
+/** Candidate evidence only; never assign this derivation directly to StoreProduct.gtin. */
 export function deriveLiderEan13Candidate(usItemId: string | null | undefined): string | null {
   if (!usItemId || !/^00\d{12}$/.test(usItemId)) return null;
   const payload = usItemId.slice(2);
@@ -103,9 +97,7 @@ function explicitGtinCandidate(product: JsonRecord): string | null {
 }
 
 function moneyValue(value: unknown): number | null {
-  if (typeof value === "number") {
-    return Number.isFinite(value) && value > 0 ? value : null;
-  }
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 ? value : null;
   const text = nonEmptyString(value);
   if (!text) return null;
   const digits = text.replace(/[^\d]/g, "");
@@ -120,8 +112,7 @@ function isWeightBasedPrice(value: unknown): boolean {
 }
 
 function categoryFromUrl(canonicalUrl: string | null): string | null {
-  if (!canonicalUrl) return null;
-  const match = canonicalUrl.match(/^\/ip\/([^/]+)\//i);
+  const match = canonicalUrl?.match(/^\/ip\/([^/]+)\//i);
   return match?.[1] ? normalizeText(match[1].replace(/-/g, " ")) : null;
 }
 
@@ -132,9 +123,7 @@ function liderPackIdentity(rawName: string): {
 } {
   const normalized = normalizeText(rawName);
   const parsed = parsePackSize(rawName);
-  const isPack = /\bpack\b/.test(normalized);
-
-  if (!isPack) {
+  if (!/\bpack\b/.test(normalized)) {
     return {
       quantity: parsed?.quantity ?? null,
       unit: parsed?.unit ?? null,
@@ -142,7 +131,6 @@ function liderPackIdentity(rawName: string): {
     };
   }
 
-  // `Pack Lata, 6 Un` gives only the count, not per-can content.
   const trailingUnits = normalized.match(/\b(\d+)\s+(?:un|u|unidad|unidades)$/);
   if (trailingUnits?.[1]) {
     const count = Number(trailingUnits[1]);
@@ -153,12 +141,11 @@ function liderPackIdentity(rawName: string): {
     };
   }
 
-  // Current names also use forms such as `Pack 3 Botella, 3 L`.
-  const explicitContainerCount = normalized.match(
+  const containerCount = normalized.match(
     /\bpack\s+(\d+)\s+(?:botella|botellas|lata|latas|unidad|unidades)\b/,
   );
-  if (explicitContainerCount?.[1]) {
-    const count = Number(explicitContainerCount[1]);
+  if (containerCount?.[1]) {
+    const count = Number(containerCount[1]);
     return {
       quantity: parsed?.unit === "un" ? null : (parsed?.quantity ?? null),
       unit: parsed?.unit === "un" ? null : (parsed?.unit ?? null),
@@ -167,8 +154,6 @@ function liderPackIdentity(rawName: string): {
   }
 
   if (parsed && parsed.packageCount > 1) return parsed;
-
-  // A pack with no explicit count is not safe to model as a single retail unit.
   return {
     quantity: parsed?.unit === "un" ? null : (parsed?.quantity ?? null),
     unit: parsed?.unit === "un" ? null : (parsed?.unit ?? null),
@@ -178,69 +163,54 @@ function liderPackIdentity(rawName: string): {
 
 export function mapLiderAvailability(product: JsonRecord): AvailabilityState {
   const display = nonEmptyString(product.availabilityStatusDisplayValue)?.toLowerCase() ?? null;
-  const isOutOfStock = typeof product.isOutOfStock === "boolean" ? product.isOutOfStock : null;
-  const canAddToCart = typeof product.canAddToCart === "boolean" ? product.canAddToCart : null;
+  const out = typeof product.isOutOfStock === "boolean" ? product.isOutOfStock : null;
+  const canAdd = typeof product.canAddToCart === "boolean" ? product.canAddToCart : null;
   const showAtc = typeof product.showAtc === "boolean" ? product.showAtc : null;
 
-  if (
-    display === "in stock" &&
-    isOutOfStock === false &&
-    canAddToCart === true &&
-    showAtc === true
-  ) return "AVAILABLE";
-
-  if (
-    display === "out of stock" &&
-    isOutOfStock === true &&
-    canAddToCart === false &&
-    showAtc === false
-  ) return "UNAVAILABLE";
-
+  if (display === "in stock" && out === false && canAdd === true && showAtc === true) {
+    return "AVAILABLE";
+  }
+  if (display === "out of stock" && out === true && canAdd === false && showAtc === false) {
+    return "UNAVAILABLE";
+  }
   return "UNKNOWN";
 }
 
 function parseBundlePromotions(product: JsonRecord): readonly BundlePromotion[] {
   const badges = recordAt(product.badges);
   const flags = Array.isArray(badges?.flags) ? badges.flags : [];
-  const promotions: BundlePromotion[] = [];
-  const fingerprints = new Set<string>();
+  const result: BundlePromotion[] = [];
+  const seen = new Set<string>();
 
-  for (const rawFlag of flags) {
-    const flag = recordAt(rawFlag);
-    if (!flag) continue;
-    const key = nonEmptyString(flag.key);
-    const text = nonEmptyString(flag.text);
+  for (const raw of flags) {
+    const flag = recordAt(raw);
+    const key = flag ? nonEmptyString(flag.key) : null;
+    const text = flag ? nonEmptyString(flag.text) : null;
     if (!text || key?.toUpperCase() !== "COMBINA") continue;
-
     const match = text.match(/combina\s+(\d+)\s*x\s*\$?\s*([\d.]+)/i);
     if (!match?.[1] || !match[2]) continue;
     const requiredQuantity = Number(match[1]);
     const totalPrice = moneyValue(match[2]);
     if (!Number.isInteger(requiredQuantity) || requiredQuantity <= 1 || totalPrice === null) continue;
-
     const fingerprint = `${requiredQuantity}|${totalPrice}|${text}`;
-    if (fingerprints.has(fingerprint)) continue;
-    fingerprints.add(fingerprint);
-    promotions.push({
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    result.push({
       kind: "bundle",
       requiredQuantity,
       totalPrice,
       memberOnly: false,
       repeatability: "unknown",
       maxApplications: null,
-      // `COMBINA` may be a qualifying-product group. Until the eligibility
-      // contract is observed, the exact-product optimizer must not apply it.
       applicationScope: "unknown",
       sourceText: text,
     });
   }
-
-  return promotions;
+  return result;
 }
 
 function isStructuralProductCandidate(node: JsonRecord): boolean {
-  if (node.__typename === "Product") return true;
-  return (
+  return node.__typename === "Product" || (
     nonEmptyString(node.usItemId) !== null &&
     nonEmptyString(node.name) !== null &&
     isRecord(node.priceInfo)
@@ -254,8 +224,7 @@ function collectProductNodes(root: unknown): { products: JsonRecord[]; visitedNo
   let visitedNodes = 0;
 
   function walk(node: unknown, depth: number): void {
-    if (depth > MAX_WALK_DEPTH || visitedNodes >= MAX_WALK_NODES) return;
-    if (node === null || typeof node !== "object") return;
+    if (depth > MAX_WALK_DEPTH || visitedNodes >= MAX_WALK_NODES || node === null || typeof node !== "object") return;
     if (seenNodes.has(node)) return;
     seenNodes.add(node);
     visitedNodes++;
@@ -274,9 +243,9 @@ function collectProductNodes(root: unknown): { products: JsonRecord[]; visitedNo
 
     if (Array.isArray(node)) {
       for (const child of node) walk(child, depth + 1);
-      return;
+    } else {
+      for (const value of Object.values(node)) walk(value, depth + 1);
     }
-    for (const value of Object.values(node)) walk(value, depth + 1);
   }
 
   walk(root, 0);
@@ -304,8 +273,8 @@ function collectStoreIds(root: unknown): string[] {
     for (const [key, value] of Object.entries(node)) {
       const nextPath = path ? `${path}.${key}` : key;
       if (!SENSITIVE_CONTEXT_PATH.test(nextPath) && key === "storeId") {
-        const storeId = nonEmptyString(value);
-        if (storeId && /^[A-Za-z0-9_-]{1,40}$/.test(storeId)) values.add(storeId);
+        const id = nonEmptyString(value);
+        if (id && /^[A-Za-z0-9_-]{1,40}$/.test(id)) values.add(id);
       }
       walk(value, nextPath, depth + 1);
     }
@@ -316,18 +285,18 @@ function collectStoreIds(root: unknown): string[] {
 }
 
 function branchFromPayload(nextData: unknown): BranchContext {
-  const storeIds = collectStoreIds(nextData);
-  if (storeIds.length !== 1) {
+  const ids = collectStoreIds(nextData);
+  if (ids.length !== 1) {
     return {
       store: "lider",
       branchId: null,
       scope: "UNKNOWN",
-      source: storeIds.length === 0 ? "lider_ssr:no_store_id" : "lider_ssr:ambiguous_store_id",
+      source: ids.length === 0 ? "lider_ssr:no_store_id" : "lider_ssr:ambiguous_store_id",
     };
   }
   return {
     store: "lider",
-    branchId: `lider:store:${storeIds[0]}`,
+    branchId: `lider:store:${ids[0]}`,
     scope: "SESSION_SCOPED",
     source: "lider_ssr:storeId",
   };
@@ -352,15 +321,13 @@ function normalizeLiderProduct(
   const canonicalUrl = nonEmptyString(raw.canonicalUrl);
   const pack = liderPackIdentity(rawName);
   const explicitGtin = explicitGtinCandidate(raw);
-  const derivedCandidate = explicitGtin ? null : deriveLiderEan13Candidate(nonEmptyString(raw.usItemId));
-  const identityCandidates: IdentityCandidate[] = derivedCandidate
-    ? [{
-        kind: "derived_gtin_candidate",
-        value: derivedCandidate,
-        confidence: "candidate",
-        source: "lider_ssr:usItemId_observed_convention",
-      }]
-    : [];
+  const derived = explicitGtin ? null : deriveLiderEan13Candidate(nonEmptyString(raw.usItemId));
+  const identityCandidates: IdentityCandidate[] = derived ? [{
+    kind: "derived_gtin_candidate",
+    value: derived,
+    confidence: "candidate",
+    source: "lider_ssr:usItemId_observed_convention",
+  }] : [];
 
   const priceInfo = recordAt(raw.priceInfo);
   const weighted = isWeightBasedPrice(priceInfo?.linePrice);
@@ -370,9 +337,6 @@ function normalizeLiderProduct(
   const safeWasPrice = currentPrice !== null && wasPrice !== null && wasPrice >= currentPrice
     ? wasPrice
     : null;
-  const normalPrice = weighted ? null : (safeWasPrice ?? currentPrice);
-  const unitPrice = weighted ? linePrice : moneyValue(priceInfo?.unitPrice);
-  const promotions = parseBundlePromotions(raw);
 
   const product: StoreProduct = {
     store: "lider",
@@ -397,13 +361,12 @@ function normalizeLiderProduct(
     storeProductId,
     branchId: branch.branchId,
     observedAt,
-    normalPrice,
+    normalPrice: weighted ? null : (safeWasPrice ?? currentPrice),
     currentPrice,
-    // Positive Mi Club semantics have not yet been observed in the current live contract.
     memberPrice: null,
-    unitPrice,
+    unitPrice: weighted ? linePrice : moneyValue(priceInfo?.unitPrice),
     availability: mapLiderAvailability(raw),
-    promotions,
+    promotions: parseBundlePromotions(raw),
     source,
   };
 
@@ -426,7 +389,6 @@ export function parseLiderSearchPayload(
   const snapshots = collected.products
     .map((raw) => normalizeLiderProduct(raw, branch, metadata.observedAt, metadata.source))
     .filter((snapshot): snapshot is StoreProductSnapshot => snapshot !== null);
-
   return {
     branch,
     snapshots,
@@ -439,12 +401,19 @@ export function parseLiderSearchPayload(
 }
 
 function sameBranch(left: BranchContext | null, right: BranchContext): boolean {
-  return left !== null && left.branchId === right.branchId && left.scope === right.scope;
+  return (
+    left !== null &&
+    left.scope !== "UNKNOWN" &&
+    right.scope !== "UNKNOWN" &&
+    left.branchId !== null &&
+    right.branchId !== null &&
+    left.branchId === right.branchId &&
+    left.scope === right.scope
+  );
 }
 
 export class LiderAdapter implements StoreAdapter {
   readonly store = "lider" as const;
-
   private readonly bridge: LiderSearchBridge;
   private readonly cache = new Map<string, StoreProductSnapshot>();
   private branch: BranchContext | null = null;
@@ -464,16 +433,10 @@ export class LiderAdapter implements StoreAdapter {
       source: bridgeResult.source,
     });
 
-    // Never mix cached observations from two browser store contexts.
-    if (this.branch !== null && !sameBranch(this.branch, parsed.branch)) {
-      this.cache.clear();
-    }
+    if (this.branch !== null && !sameBranch(this.branch, parsed.branch)) this.cache.clear();
     this.branch = parsed.branch;
     this.lastSuccessfulSearchAt = bridgeResult.observedAt;
-
-    for (const snapshot of parsed.snapshots) {
-      this.cache.set(snapshot.product.storeProductId, snapshot);
-    }
+    for (const snapshot of parsed.snapshots) this.cache.set(snapshot.product.storeProductId, snapshot);
     return parsed.snapshots;
   }
 
