@@ -249,6 +249,9 @@ Privacy / safety
       frame.addEventListener('load', () => {
         setTimeout(() => {
           try {
+            const href = frame.contentWindow?.location?.href || '';
+            if (href === 'about:blank') return;
+
             const doc = frame.contentDocument;
             if (!doc) {
               finish({ query, sourceMode: 'same-origin-iframe', error: 'no-content-document', productCount: 0, products: [] });
@@ -265,10 +268,10 @@ Privacy / safety
             });
           }
         }, 1200);
-      }, { once: true });
+      });
 
-      document.documentElement.appendChild(frame);
       frame.src = target;
+      document.documentElement.appendChild(frame);
     });
   }
 
