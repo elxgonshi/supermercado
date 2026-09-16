@@ -52,6 +52,7 @@ export type MatchDecision =
       reasons: string[];
     };
 
+
 const SPACE_RE = /\s+/g;
 const NON_ALNUM_RE = /[^a-z0-9]+/g;
 
@@ -69,7 +70,16 @@ export function normalizeGtin(value: string | null | undefined): string | null {
   if (!value) return null;
   const digits = value.replace(/\D/g, "");
   if (![8, 12, 13, 14].includes(digits.length)) return null;
-  return isValidGtin(digits) ? digits : null;
+  if (!isValidGtin(digits)) return null;
+
+  // Unimarc has been observed returning values in this 999000000... namespace
+  // for retailer-created products such as returnable bottle + deposit items.
+  // They are not treated as authoritative manufacturer identity keys.
+  if (/^999000000\d+$/.test(digits)) return null;
+
+  // Compare all GTIN representations in their canonical 14-digit form so a
+  // UPC-A/GTIN-12 and the equivalent zero-padded GTIN-14 match exactly.
+  return digits.padStart(14, "0");
 }
 
 export function isValidGtin(gtin: string): boolean {
@@ -110,6 +120,7 @@ function toBaseQuantity(rawQuantity: string, rawUnit: string): Pick<ParsedPackSi
 }
 
 export function parsePackSize(rawName: string): ParsedPackSize | null {
+  // Mixed bundles (e.g. "2 x Coca Cola + 1 x Sprite") are intentionally left unresolved.
   if (rawName.includes("+")) return null;
   const text = rawName
     .toLowerCase()
@@ -118,6 +129,7 @@ export function parsePackSize(rawName: string): ParsedPackSize | null {
     .replace(SPACE_RE, " ")
     .trim();
 
+  // Safe single-format packs: "6 un de 350 ml", "6 unidades x 350 ml".
   const explicitPack = text.match(new RegExp(`\\b(\\d+)\\s*(?:un|u|unidad(?:es)?)\\s*(?:de|x)\\s*${DECIMAL}\\s*${UNIT}\\b`, "i"));
   if (explicitPack) {
     const packageCount = Number(explicitPack[1]);
@@ -125,6 +137,7 @@ export function parsePackSize(rawName: string): ParsedPackSize | null {
     if (Number.isInteger(packageCount) && packageCount > 0 && base) return { ...base, packageCount };
   }
 
+  // Compact packs: "2 x 1.5 L". Require an explicit x to avoid guessing mixed packs.
   const compactPack = text.match(new RegExp(`\\b(\\d+)\\s*x\\s*${DECIMAL}\\s*${UNIT}\\b`, "i"));
   if (compactPack) {
     const packageCount = Number(compactPack[1]);
@@ -132,6 +145,7 @@ export function parsePackSize(rawName: string): ParsedPackSize | null {
     if (Number.isInteger(packageCount) && packageCount > 0 && base) return { ...base, packageCount };
   }
 
+  // A single quantity at the end of the product name.
   const single = text.match(new RegExp(`${DECIMAL}\\s*${UNIT}\\s*$`, "i"));
   if (single) {
     const base = toBaseQuantity(single[1] ?? "", single[2] ?? "");
@@ -152,6 +166,8 @@ export function enrichPackSize(product: StoreProduct): StoreProduct {
     packageCount: product.packageCount ?? parsed.packageCount,
   };
 }
+
+
 
 const STOPWORDS = new Set([
   "de", "del", "la", "las", "el", "los", "con", "sin", "para", "por", "y", "o",
@@ -219,8 +235,11 @@ function deterministicMatch(a: StoreProduct, b: StoreProduct): boolean {
   if (!a.unit || !b.unit || a.unit !== b.unit) return false;
   if (a.packageCount === null || b.packageCount === null || a.packageCount !== b.packageCount) return false;
 
-  if ((variantA === null) !== (variantB === null)) return false;
-  if (variantA && variantB && variantA !== variantB) return false;
+  // Exact-product confirmation requires an explicit variant on both sides.
+  // If both are missing, we cannot prove that e.g. "entera" and "descremada"
+  // were not simply omitted by an upstream parser.
+  if (!variantA || !variantB) return false;
+  if (variantA !== variantB) return false;
   return true;
 }
 

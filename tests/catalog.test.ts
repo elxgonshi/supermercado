@@ -36,7 +36,7 @@ test("normalizeText normalizes accents, case and punctuation", () => {
 
 test("GTIN validation accepts valid values and rejects invalid checksums", () => {
   assert.equal(isValidGtin("7802920203300"), true);
-  assert.equal(normalizeGtin("7802920203300"), "7802920203300");
+  assert.equal(normalizeGtin("7802920203300"), "07802920203300");
   assert.equal(normalizeGtin("7802920203301"), null);
 });
 
@@ -57,6 +57,16 @@ test("parsePackSize does not guess mixed-format packs", () => {
   assert.equal(parsePackSize("Pack Coca Cola 2 un de 3 L + Sprite 1 un de 3 L"), null);
 });
 
+test("GTIN normalization ignores observed retailer placeholder namespace", () => {
+  assert.equal(normalizeGtin("9990000000135"), null);
+});
+
+test("GTIN normalization canonicalizes equivalent lengths", () => {
+  // UPC-A 036000291452 is equivalent to zero-padded GTIN-14 00036000291452.
+  assert.equal(normalizeGtin("036000291452"), "00036000291452");
+  assert.equal(normalizeGtin("00036000291452"), "00036000291452");
+});
+
 test("matching confirms exact valid GTIN first", () => {
   const left = product({ gtin: "7802920203300" });
   const right = product({ store: "unimarc", storeProductId: "410", rawName: "Mantequilla Colun con sal pan 250 g", gtin: "7802920203300" });
@@ -75,10 +85,26 @@ test("matching rejects different valid GTINs even when names are similar", () =>
   });
 });
 
+test("retailer placeholder GTIN does not hard-reject an otherwise deterministic match", () => {
+  const left = product({ gtin: "7802920203300" });
+  const right = product({ store: "unimarc", gtin: "9990000000135" });
+  const result = matchStoreProducts(left, right);
+  assert.equal(result.kind, "confirmed");
+  assert.equal(result.strategy, "deterministic");
+});
+
 test("matching confirms deterministic attributes when GTIN is unavailable", () => {
   const result = matchStoreProducts(product(), product({ store: "unimarc", storeProductId: "410" }));
   assert.equal(result.kind, "confirmed");
   assert.equal(result.strategy, "deterministic");
+});
+
+
+test("matching does not auto-confirm when variant is missing on both sides", () => {
+  const left = product({ variant: null, rawName: "Leche Colun 1 L" });
+  const right = product({ store: "unimarc", variant: null, rawName: "Leche Colun 1 litro" });
+  const result = matchStoreProducts(left, right);
+  assert.notEqual(result.kind, "confirmed");
 });
 
 test("matching rejects different variants", () => {

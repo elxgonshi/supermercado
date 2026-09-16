@@ -14,11 +14,12 @@ Esta base no copia código del proyecto de referencia. Se reutilizan conceptos y
 
 ## Reglas del matching implementado
 
-1. GTIN/EAN válido e idéntico: confirmación automática.
-2. Sin GTIN: atributos determinísticos deben coincidir (marca, familia, variante, cantidad, unidad y `packageCount`).
-3. Conflictos determinísticos bloquean el match.
-4. Similaridad textual nunca confirma por sí sola: genera revisión humana.
-5. El matching no usa precio, promoción ni stock como señal de identidad.
+1. GTIN/EAN válido e idéntico: confirmación automática. Para comparar se normaliza a GTIN-14.
+2. Códigos retailer observados en el namespace `999000000...` de Unimarc no se usan como identidad GTIN autoritativa.
+3. Sin GTIN: atributos determinísticos deben coincidir (marca, familia, variante explícita, cantidad, unidad y `packageCount`).
+4. Conflictos determinísticos bloquean el match.
+5. Similaridad textual nunca confirma por sí sola: genera revisión humana.
+6. El matching no usa precio, promoción ni stock como señal de identidad.
 
 ## Evidencia Unimarc validada en septiembre de 2026
 
