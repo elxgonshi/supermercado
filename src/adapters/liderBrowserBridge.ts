@@ -34,6 +34,7 @@ export class LiderContractError extends Error {
 
 interface BrowserInspection {
   readonly pathname: string;
+  readonly searchQuery: string | null;
   readonly challenge: boolean;
   readonly nextDataText: string | null;
 }
@@ -110,14 +111,17 @@ export class LiderLocalBrowserBridge implements LiderSearchBridge {
       const script = document.querySelector("script#__NEXT_DATA__");
       return {
         pathname: location.pathname,
+        searchQuery: new URLSearchParams(location.search).get("query"),
         challenge,
         nextDataText: script?.textContent || null,
       };
     });
 
     if (inspection.challenge) throw new LiderChallengeError();
-    if (inspection.pathname !== "/search") {
-      throw new LiderContractError(`Unexpected Lider navigation: ${inspection.pathname}`);
+    if (inspection.pathname !== "/search" || inspection.searchQuery !== query) {
+      throw new LiderContractError(
+        `Unexpected Lider navigation: ${inspection.pathname}?query=${inspection.searchQuery ?? ""}`,
+      );
     }
     if (!inspection.nextDataText) {
       throw new LiderContractError("Lider search page did not expose __NEXT_DATA__");
