@@ -11,6 +11,7 @@ import {
   type LiderBridgeSearchResult,
   type LiderSearchBridge,
 } from "../src/adapters/lider.ts";
+import { isValidBundlePromotion } from "../src/pricing.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(
@@ -57,7 +58,28 @@ test("Lider current rollback maps public current/normal/unit prices without fabr
   }]);
 });
 
-test("Lider COMBINA becomes an explicit conservative bundle promotion", () => {
+test("Lider ignores a malformed wasPrice lower than current price", () => {
+  const payload = {
+    storeId: "94",
+    product: {
+      __typename: "Product",
+      usItemId: "00780292020330",
+      name: "Mantequilla Con sal, 250 g",
+      brand: "Colun",
+      canonicalUrl: "/ip/mantequillas-y-margarinas/00780292020330",
+      priceInfo: { linePrice: "$2.990", wasPrice: "$2.500" },
+      availabilityStatusDisplayValue: "In stock",
+      isOutOfStock: false,
+      canAddToCart: true,
+      showAtc: true,
+    },
+  };
+  const parsed = parseLiderSearchPayload(payload, metadata);
+  assert.equal(parsed.snapshots[0]?.observation.currentPrice, 2990);
+  assert.equal(parsed.snapshots[0]?.observation.normalPrice, 2990);
+});
+
+test("Lider COMBINA is preserved but not optimizer-eligible until application scope is proven", () => {
   const parsed = parseLiderSearchPayload(fixture, metadata);
   const coke = parsed.snapshots.find((s) => s.product.storeProductId === "00780161000057");
   assert.ok(coke);
@@ -68,8 +90,10 @@ test("Lider COMBINA becomes an explicit conservative bundle promotion", () => {
     memberOnly: false,
     repeatability: "unknown",
     maxApplications: null,
+    applicationScope: "unknown",
     sourceText: "Combina 2 x $1.950",
   }]);
+  assert.equal(isValidBundlePromotion(coke.observation.promotions[0]!), false);
 });
 
 test("Lider positive OOS controls map to UNAVAILABLE only when signals converge", () => {
@@ -128,8 +152,8 @@ test("explicit valid GTIN wins over derived identity candidate", () => {
       availabilityStatusDisplayValue: "In stock",
       isOutOfStock: false,
       canAddToCart: true,
-      showAtc: true
-    }
+      showAtc: true,
+    },
   };
   const parsed = parseLiderSearchPayload(payload, metadata);
   assert.equal(parsed.snapshots[0]?.product.gtin, "07802920203300");
@@ -146,7 +170,11 @@ test("ambiguous store IDs degrade branch context to UNKNOWN", () => {
 
 class FakeBridge implements LiderSearchBridge {
   private index = 0;
-  constructor(private readonly responses: LiderBridgeSearchResult[]) {}
+  private readonly responses: LiderBridgeSearchResult[];
+
+  constructor(responses: LiderBridgeSearchResult[]) {
+    this.responses = responses;
+  }
 
   async search(_query: string): Promise<LiderBridgeSearchResult> {
     const response = this.responses[this.index++];
@@ -173,7 +201,23 @@ test("Lider adapter hydrates cache and serves price/promo/availability getters w
   assert.equal((await adapter.healthCheck()).ok, true);
 });
 
-test("Lider adapter invalidates cache when browser store context changes", async () => {
+test("Lider adapter invalidates stale cache when browser store context changes", async () => {
+  const firstPayload = structuredClone(fixture) as {
+    props: { pageProps: { initialData: { search: { items: Array<Record<string, unknown>> } } } };
+  };
+  firstPayload.props.pageProps.initialData.search.items.push({
+    __typename: "Product",
+    usItemId: "00780000000001",
+    name: "Producto solo contexto anterior, 1 un",
+    brand: "Test",
+    canonicalUrl: "/ip/test/00780000000001",
+    priceInfo: { linePrice: "$1.000" },
+    availabilityStatusDisplayValue: "In stock",
+    isOutOfStock: false,
+    canAddToCart: true,
+    showAtc: true,
+  });
+
   const secondPayload = structuredClone(fixture) as {
     props: { pageProps: { initialData: { contentLayout: { modules: Array<{ configs?: { ad?: { storeId?: string } } }> } } } };
   };
@@ -182,15 +226,15 @@ test("Lider adapter invalidates cache when browser store context changes", async
   module.configs.ad.storeId = "0000000095";
 
   const adapter = new LiderAdapter(new FakeBridge([
-    { nextData: fixture, ...metadata },
+    { nextData: firstPayload, ...metadata },
     { nextData: secondPayload, observedAt: "2026-09-16T03:00:00.000Z", source: metadata.source },
   ]));
 
   await adapter.searchProducts("mantequilla colun");
-  assert.ok(await adapter.getProduct("00780292020330"));
+  assert.ok(await adapter.getProduct("00780000000001"));
   await adapter.searchProducts("coca cola");
   assert.equal((await adapter.resolveBranch()).branchId, "lider:store:0000000095");
-  // Products present in the second payload are re-hydrated; stale-only data would be removed.
+  assert.equal(await adapter.getProduct("00780000000001"), null);
   assert.ok(await adapter.getProduct("00780292020330"));
 });
 
