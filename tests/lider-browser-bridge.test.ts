@@ -9,6 +9,7 @@ import {
 
 interface Inspection {
   pathname: string;
+  searchQuery: string | null;
   challenge: boolean;
   nextDataText: string | null;
 }
@@ -39,7 +40,12 @@ class FakePage implements LocalBrowserPagePort {
 }
 
 test("local Lider bridge performs one encoded search and returns transient SSR JSON", async () => {
-  const page = new FakePage([{ pathname: "/search", challenge: false, nextDataText: '{"ok":true}' }]);
+  const page = new FakePage([{
+    pathname: "/search",
+    searchQuery: "azúcar iansa",
+    challenge: false,
+    nextDataText: '{"ok":true}',
+  }]);
   const bridge = new LiderLocalBrowserBridge(page, { minIntervalMs: 0 });
 
   const result = await bridge.search("azúcar iansa");
@@ -50,22 +56,49 @@ test("local Lider bridge performs one encoded search and returns transient SSR J
 });
 
 test("local Lider bridge surfaces challenge and never retries", async () => {
-  const page = new FakePage([{ pathname: "/search", challenge: true, nextDataText: null }]);
+  const page = new FakePage([{
+    pathname: "/search",
+    searchQuery: "leche",
+    challenge: true,
+    nextDataText: null,
+  }]);
   const bridge = new LiderLocalBrowserBridge(page, { minIntervalMs: 0 });
 
   await assert.rejects(() => bridge.search("leche"), LiderChallengeError);
   assert.equal(page.navigations.length, 1);
 });
 
-test("local Lider bridge rejects unexpected navigation and missing Next data", async () => {
-  const redirected = new FakePage([{ pathname: "/blocked", challenge: false, nextDataText: null }]);
+test("local Lider bridge rejects path or query redirection and missing Next data", async () => {
+  const redirected = new FakePage([{
+    pathname: "/blocked",
+    searchQuery: null,
+    challenge: false,
+    nextDataText: null,
+  }]);
   await assert.rejects(
     () => new LiderLocalBrowserBridge(redirected, { minIntervalMs: 0 }).search("leche"),
     LiderContractError,
   );
   assert.equal(redirected.navigations.length, 1);
 
-  const missing = new FakePage([{ pathname: "/search", challenge: false, nextDataText: null }]);
+  const wrongQuery = new FakePage([{
+    pathname: "/search",
+    searchQuery: "pan",
+    challenge: false,
+    nextDataText: '{"ok":true}',
+  }]);
+  await assert.rejects(
+    () => new LiderLocalBrowserBridge(wrongQuery, { minIntervalMs: 0 }).search("leche"),
+    LiderContractError,
+  );
+  assert.equal(wrongQuery.navigations.length, 1);
+
+  const missing = new FakePage([{
+    pathname: "/search",
+    searchQuery: "leche",
+    challenge: false,
+    nextDataText: null,
+  }]);
   await assert.rejects(
     () => new LiderLocalBrowserBridge(missing, { minIntervalMs: 0 }).search("leche"),
     LiderContractError,
