@@ -1,0 +1,65 @@
+LIDER STOCK / LOCAL CONTEXT PROBE v2 — INSTRUCCIONES
+
+OBJETIVO
+Cerrar los dos gates que siguen abiertos después del v1:
+- señales reales de stock/Agregar al carro;
+- identificador seguro de tienda/sucursal si el SSR lo expone.
+
+NO REPITE LAS 10 BÚSQUEDAS.
+Hace solo estas 3:
+- mantequilla colun
+- coca cola
+- pechuga pollo
+
+ANTES
+1. Abre https://super.lider.cl en Chrome.
+2. Mantén seleccionada la MISMA tienda/dirección habitual que usaste para el v1.
+3. No cambies tienda mientras corre.
+
+PASOS
+1. F12 > Sources > Snippets.
+2. Pega TODO `spikes/lider_stock_context_probe_v2.js`.
+3. Ejecuta el snippet.
+4. En Console verifica:
+
+   typeof __LIDER_STOCK_V2__
+
+   Debe devolver "object".
+
+5. Ejecuta:
+
+   await __LIDER_STOCK_V2__.run()
+
+6. Espera a que termine las 3 búsquedas.
+7. Ejecuta:
+
+   __LIDER_STOCK_V2__.status()
+
+8. Descarga:
+
+   __LIDER_STOCK_V2__.download("lider-stock-context-v2.sanitized.json")
+
+9. Sube al chat SOLO:
+
+   lider-stock-context-v2.sanitized.json
+
+SI FALLA
+- Si aparece timeout, unexpected-navigation, 0 productos o challenge, NO repitas.
+- Descarga igualmente el JSON y súbelo.
+- El probe no intenta evadir CAPTCHA ni hace retries.
+
+PRIVACIDAD
+El export NO guarda:
+- dirección;
+- código postal;
+- geocoordenadas;
+- cookies;
+- localStorage/sessionStorage;
+- headers;
+- tokens;
+- HTML completo;
+- __NEXT_DATA__ bruto.
+
+Solo busca IDs técnicos de tienda con nombres explícitos como storeId/storeNumber,
+y señales públicas de stock/ATC como isOutOfStock, canAddToCart, showAtc,
+availabilityStatusV2 y fulfillmentSummary sanitizado.

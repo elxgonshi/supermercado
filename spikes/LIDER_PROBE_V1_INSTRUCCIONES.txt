@@ -1,0 +1,14 @@
+LIDER LIVE CONTRACT PROBE v1 — INSTRUCCIONES
+
+ESTADO
+COMPLETADO el 2026-09-16. No repetir salvo cambio de contrato.
+
+RESULTADO
+- 10/10 búsquedas con __NEXT_DATA__ parseable.
+- 301 productos en total.
+- 0 challenges/bloqueos.
+- Evidencia resumida en:
+  tests/fixtures/lider-live-contract-summary-2026-09-16.json
+
+Este archivo se conserva como trazabilidad del spike original.
+El siguiente paso es `LIDER_STOCK_CONTEXT_V2_INSTRUCCIONES.txt`.

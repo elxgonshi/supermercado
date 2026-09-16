@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "2.0-lider-stock-context-summary",
+  "capturedAt": "2026-09-16T02:33:21.099Z",
+  "origin": "https://super.lider.cl",
+  "queryCounts": {
+    "mantequilla colun": 4,
+    "coca cola": 25,
+    "pechuga pollo": 44
+  },
+  "totals": {
+    "queries": 3,
+    "products": 73,
+    "queriesWithNextData": 3,
+    "queriesWithChallenge": 0,
+    "inStock": 69,
+    "outOfStock": 4,
+    "canAddToCartFalse": 4,
+    "showAtcFalse": 4,
+    "displayInStock": 69,
+    "displayOutOfStock": 4
+  },
+  "storeContext": {
+    "candidatePath": "props.pageProps.initialData.contentLayout.modules[1].configs.ad.storeId",
+    "candidateKey": "storeId",
+    "observedValues": ["0000000094"],
+    "sameAcrossAllThreeQueries": true,
+    "scope": "SSR technical store context observed in the selected browser session; effect of switching stores was not independently compared"
+  },
+  "stockContract": {
+    "availablePattern": {
+      "availabilityStatusDisplayValue": "In stock",
+      "isOutOfStock": false,
+      "canAddToCart": true,
+      "showAtc": true,
+      "fulfillmentType": "FC"
+    },
+    "unavailablePattern": {
+      "availabilityStatusDisplayValue": "Out of stock",
+      "isOutOfStock": true,
+      "canAddToCart": false,
+      "showAtc": false,
+      "fulfillmentType": "FC"
+    },
+    "positiveOutOfStockControls": [
+      {
+        "usItemId": "00780961172061",
+        "name": "Pollo Pechuga Deshuesada Envasada., 850 g",
+        "brand": "Super Pollo"
+      },
+      {
+        "usItemId": "00780961172066",
+        "name": "Pollo Pechuga Deshuesada Sin Marinar Envasada, 780 g",
+        "brand": "Super Pollo"
+      },
+      {
+        "usItemId": "00789490428941",
+        "name": "Pollo Pechuga Deshuesada Congelada, 1 kg",
+        "brand": "El Buen Corte"
+      },
+      {
+        "usItemId": "00780961172080",
+        "name": "Molida de Pechuga, 320 g",
+        "brand": "Super Pollo"
+      }
+    ]
+  }
+}
