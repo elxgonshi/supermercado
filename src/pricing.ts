@@ -74,5 +74,9 @@ export function isValidBundlePromotion(promotion: BundlePromotion): boolean {
   ) {
     return false;
   }
+  // Contradictory source data must not make a one-shot promotion repeatable.
+  if (promotion.repeatability === "single" && (promotion.maxApplications ?? 1) !== 1) {
+    return false;
+  }
   return true;
 }
