@@ -3,6 +3,7 @@ import type { StoreId } from "./catalog.ts";
 export type AvailabilityState = "AVAILABLE" | "UNAVAILABLE" | "UNKNOWN";
 
 export type BundleRepeatability = "single" | "repeatable" | "unknown";
+export type BundleApplicationScope = "same_product" | "qualifying_group" | "unknown";
 
 export interface BundlePromotion {
   readonly kind: "bundle";
@@ -19,6 +20,15 @@ export interface BundlePromotion {
   readonly repeatability: BundleRepeatability;
   /** Límite explícito observado; null si la fuente no informa uno. */
   readonly maxApplications: number | null;
+  /**
+   * Alcance de elegibilidad cuando la fuente lo expone. Si está presente y no
+   * es `same_product`, el optimizador exact-product no puede aplicar el bundle
+   * como descuento de múltiples unidades del mismo SKU.
+   *
+   * Se mantiene opcional para compatibilidad con contratos ya validados donde
+   * la semántica same-product fue demostrada antes de introducir este campo.
+   */
+  readonly applicationScope?: BundleApplicationScope;
   readonly sourceText: string | null;
 }
 
@@ -72,6 +82,11 @@ export function isValidBundlePromotion(promotion: BundlePromotion): boolean {
     promotion.maxApplications !== null &&
     (!Number.isInteger(promotion.maxApplications) || promotion.maxApplications <= 0)
   ) {
+    return false;
+  }
+  // A retailer may advertise a "mix & match" group. Never reinterpret that as
+  // multiple units of this exact SKU unless same-product scope is proven.
+  if (promotion.applicationScope !== undefined && promotion.applicationScope !== "same_product") {
     return false;
   }
   // Contradictory source data must not make a one-shot promotion repeatable.

@@ -1,0 +1,127 @@
+{
+  "props": {
+    "pageProps": {
+      "initialData": {
+        "contentLayout": {
+          "modules": [
+            {},
+            {
+              "configs": {
+                "ad": {
+                  "storeId": "0000000094"
+                }
+              }
+            }
+          ]
+        },
+        "search": {
+          "items": [
+            {
+              "__typename": "Product",
+              "usItemId": "00780292020330",
+              "id": "6870",
+              "name": "Mantequilla Con sal, 250 g",
+              "brand": "Colun",
+              "canonicalUrl": "/ip/mantequillas-y-margarinas/00780292020330",
+              "priceInfo": {
+                "linePrice": "$2.990",
+                "wasPrice": "$3.290",
+                "unitPrice": "$11.960 x kg",
+                "memberPriceString": null
+              },
+              "badges": {
+                "flags": [
+                  { "key": "ROLLBACK", "text": "Rebaja", "type": "ICON" }
+                ]
+              },
+              "availabilityStatusDisplayValue": "In stock",
+              "isOutOfStock": false,
+              "canAddToCart": true,
+              "showAtc": true,
+              "fulfillmentType": "FC"
+            },
+            {
+              "__typename": "Product",
+              "usItemId": "00780161000057",
+              "name": "Bebida Botella sabor Original, 591 ml",
+              "brand": "Coca-cola",
+              "canonicalUrl": "/ip/bebidas/00780161000057",
+              "priceInfo": {
+                "linePrice": "$1.290",
+                "wasPrice": null,
+                "unitPrice": "$2.186 x lt",
+                "memberPriceString": null
+              },
+              "badges": {
+                "flags": [
+                  { "key": "COMBINA", "text": "Combina 2 x $1.950", "type": "LABEL" }
+                ]
+              },
+              "availabilityStatusDisplayValue": "In stock",
+              "isOutOfStock": false,
+              "canAddToCart": true,
+              "showAtc": true,
+              "fulfillmentType": "FC"
+            },
+            {
+              "__typename": "Product",
+              "usItemId": "00780961172061",
+              "name": "Pollo Pechuga Deshuesada Envasada., 850 g",
+              "brand": "Super Pollo",
+              "canonicalUrl": "/ip/pollo/00780961172061",
+              "priceInfo": {
+                "linePrice": "$5.790",
+                "wasPrice": "$7.290",
+                "unitPrice": "$6.812 x kg",
+                "memberPriceString": null
+              },
+              "badges": { "flags": [] },
+              "availabilityStatusDisplayValue": "Out of stock",
+              "isOutOfStock": true,
+              "canAddToCart": false,
+              "showAtc": false,
+              "fulfillmentType": "FC"
+            },
+            {
+              "__typename": "Product",
+              "usItemId": "00216365000000",
+              "name": "Pollo Pechuga Entera Envasada",
+              "brand": "Super Pollo",
+              "canonicalUrl": "/ip/pollo/00216365000000",
+              "priceInfo": {
+                "linePrice": "$4.590/kg",
+                "wasPrice": "$5.790/kg",
+                "unitPrice": "$4.590 x kg",
+                "memberPriceString": null
+              },
+              "badges": { "flags": [] },
+              "availabilityStatusDisplayValue": "In stock",
+              "isOutOfStock": false,
+              "canAddToCart": true,
+              "showAtc": true,
+              "fulfillmentType": "FC"
+            },
+            {
+              "usItemId": "00780161035635",
+              "name": "Bebida Sin Azúcar Pack Lata, 6 Un",
+              "brand": "Coca-cola",
+              "canonicalUrl": "/ip/bebidas/00780161035635",
+              "priceInfo": {
+                "linePrice": "$4.150",
+                "wasPrice": null,
+                "unitPrice": null,
+                "memberPriceString": null
+              },
+              "badges": { "flags": [] },
+              "availabilityStatusDisplayValue": "In stock",
+              "isOutOfStock": false,
+              "canAddToCart": true,
+              "showAtc": true,
+              "fulfillmentType": "FC"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
